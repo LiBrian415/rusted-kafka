@@ -13,6 +13,7 @@ pub struct KafkaZkWatcher {
 /// I.e. It's better to think of handlers and watchers as notifications/interrupts 
 /// instead of callbacks. Namely, they should trigger a state change which will 
 /// causes a cache invalidation and force the Broker to retry at some later time.
+#[derive(Clone)]
 pub struct KafkaZkHandlers {
     change_handlers: Arc<RwLock<HashMap<String, Box<dyn ZkChangeHandler>>>>, 
     child_change_handlers: Arc<RwLock<HashMap<String, Box<dyn ZkChildChangeHandler>>>>, 
@@ -30,7 +31,16 @@ pub trait ZkChildChangeHandler: Send + Sync {
     fn handle_child_change(&self);
 }
 
+impl KafkaZkWatcher {
+    fn init(handlers: KafkaZkHandlers) -> KafkaZkWatcher {
+        KafkaZkWatcher {
+            handlers
+        }
+    }
+}
+
 impl Watcher for KafkaZkWatcher {
+    // TODO: Should also handle KeeperState Changes
     fn handle(&self, event: zookeeper::WatchedEvent) {
         if let Some(path) = event.path {
             match event.event_type {
@@ -65,6 +75,12 @@ impl Watcher for KafkaZkWatcher {
 }
 
 impl KafkaZkHandlers {
+    pub fn init() -> KafkaZkHandlers {
+        KafkaZkHandlers {
+            change_handlers: Arc::new(RwLock::new(HashMap::new())),
+            child_change_handlers: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
 
     pub fn register_znode_change_handler(&self, handler: Box<dyn ZkChangeHandler>) {
         let mut g = self.change_handlers.write().unwrap();
@@ -95,5 +111,219 @@ impl KafkaZkHandlers {
         let g = self.child_change_handlers.read().unwrap();
         (*g).contains_key(path)
     }
+}
 
+
+#[cfg(test)]
+mod handler_tests {
+    use std::sync::{Mutex, Arc};
+
+    use zookeeper::{WatchedEvent, WatchedEventType, KeeperState, Watcher};
+
+    use super::{ZkChangeHandler, ZkChildChangeHandler, KafkaZkHandlers, KafkaZkWatcher};
+
+    const TEST_PATH: &str = "tmp";
+
+    struct TestStruct {
+        data: Arc<Mutex<i32>>
+    }
+
+    impl TestStruct {
+        fn init() -> TestStruct {
+            TestStruct { data: Arc::new(Mutex::new(0)) }
+        }
+    }
+
+    struct TestStructChangeHandler {
+        data: Arc<Mutex<i32>>
+    }
+
+    impl TestStructChangeHandler{
+        pub fn init(ts: &TestStruct) -> Box<TestStructChangeHandler> {
+            Box::new(TestStructChangeHandler {
+                data: ts.data.clone()
+            })
+        }
+    }
+    
+    impl ZkChangeHandler for TestStructChangeHandler {
+        fn path(&self) -> String {
+            TEST_PATH.to_string()
+        }
+
+        fn handle_create(&self) {
+            let mut g = self.data.lock().unwrap();
+            (*g) = 1;
+        }
+
+        fn handle_delete(&self) {
+            let mut g = self.data.lock().unwrap();
+            (*g) = 2;
+        }
+
+        fn handle_data_change(&self) {
+            let mut g = self.data.lock().unwrap();
+            (*g) = 3;
+        }
+    }
+
+    struct TestStructChildChangeHandler {
+        data: Arc<Mutex<i32>>
+    }
+
+    impl TestStructChildChangeHandler {
+        pub fn init(ts: &TestStruct) -> Box<TestStructChildChangeHandler> {
+            Box::new(TestStructChildChangeHandler {
+                data: ts.data.clone()
+            })
+        }
+    }
+
+    impl ZkChildChangeHandler for TestStructChildChangeHandler {
+        fn path(&self) -> String {
+            TEST_PATH.to_string()
+        }
+
+        fn handle_child_change(&self) {
+            let mut g = self.data.lock().unwrap();
+            (*g) = 4;
+        }
+    }
+
+    fn setup() -> (KafkaZkWatcher, KafkaZkHandlers) {
+        let handler = KafkaZkHandlers::init();
+        let watcher = KafkaZkWatcher::init(handler.clone());
+        (watcher, handler)
+    }
+
+    fn mock_event(event_type: WatchedEventType, keeper_state: KeeperState, path: Option<String>) -> WatchedEvent {
+        WatchedEvent { event_type, keeper_state, path }
+    }
+
+    #[test]
+    fn node_create() {
+        let (watcher, handler) = setup();
+        let ts = TestStruct::init();
+        let ts_handler = TestStructChangeHandler::init(&ts);
+        handler.register_znode_change_handler(ts_handler);
+
+        let event = mock_event(WatchedEventType::NodeCreated, KeeperState::SyncConnected, Some(TEST_PATH.to_string()));
+        watcher.handle(event);
+
+        let g = ts.data.lock().unwrap();
+        assert_eq!(*g, 1);
+    }
+
+    #[test]
+    fn node_delete() {
+        let (watcher, handler) = setup();
+        let ts = TestStruct::init();
+        let ts_handler = TestStructChangeHandler::init(&ts);
+        handler.register_znode_change_handler(ts_handler);
+
+        let event = mock_event(WatchedEventType::NodeDeleted, KeeperState::SyncConnected, Some(TEST_PATH.to_string()));
+        watcher.handle(event);
+
+        let g = ts.data.lock().unwrap();
+        assert_eq!(*g, 2);
+    }
+
+    #[test]
+    fn node_data_change() {
+        let (watcher, handler) = setup();
+        let ts = TestStruct::init();
+        let ts_handler = TestStructChangeHandler::init(&ts);
+        handler.register_znode_change_handler(ts_handler);
+
+        let event = mock_event(WatchedEventType::NodeDataChanged, KeeperState::SyncConnected, Some(TEST_PATH.to_string()));
+        watcher.handle(event);
+
+        let g = ts.data.lock().unwrap();
+        assert_eq!(*g, 3);
+    }
+
+    #[test]
+    fn node_child_change() {
+        let (watcher, handler) = setup();
+        let ts = TestStruct::init();
+        let ts_handler = TestStructChildChangeHandler::init(&ts);
+        handler.register_znode_child_change_handler(ts_handler);
+
+        let event = mock_event(WatchedEventType::NodeChildrenChanged, KeeperState::SyncConnected, Some(TEST_PATH.to_string()));
+        watcher.handle(event);
+
+        let g = ts.data.lock().unwrap();
+        assert_eq!(*g, 4);
+    }
+
+    #[test]
+    fn no_handlers() {
+        let (watcher, _handler) = setup();
+        let ts = TestStruct::init();
+
+        let event = mock_event(WatchedEventType::NodeCreated, KeeperState::SyncConnected, Some(TEST_PATH.to_string()));
+        watcher.handle(event);
+
+        let g = ts.data.lock().unwrap();
+        assert_eq!(*g, 0);
+    }
+
+    #[test]
+    fn contains_change () {
+        let (_watcher, handler) = setup();
+        let ts = TestStruct::init();
+
+        assert!(!handler.contains_znode_change_handler(TEST_PATH));
+
+        let ts_handler = TestStructChangeHandler::init(&ts);
+        handler.register_znode_change_handler(ts_handler);
+
+        assert!(handler.contains_znode_change_handler(TEST_PATH));
+    }
+
+    #[test]
+    fn unregister_change() {
+        let (watcher, handler) = setup();
+        let ts = TestStruct::init();
+
+        let ts_handler = TestStructChangeHandler::init(&ts);
+        handler.register_znode_change_handler(ts_handler);
+        handler.unregister_znode_change_handler(TEST_PATH);
+
+        let event = mock_event(WatchedEventType::NodeCreated, KeeperState::SyncConnected, Some(TEST_PATH.to_string()));
+        watcher.handle(event);
+
+        let g = ts.data.lock().unwrap();
+        assert_eq!(*g, 0);
+    }
+
+
+    #[test]
+    fn contains_child_change () {
+        let (_watcher, handler) = setup();
+        let ts = TestStruct::init();
+
+        assert!(!handler.contains_znode_child_change_handler(TEST_PATH));
+
+        let ts_handler = TestStructChildChangeHandler::init(&ts);
+        handler.register_znode_child_change_handler(ts_handler);
+
+        assert!(handler.contains_znode_child_change_handler(TEST_PATH));
+    }
+
+    #[test]
+    fn unregister_child_change() {
+        let (watcher, handler) = setup();
+        let ts = TestStruct::init();
+
+        let ts_handler = TestStructChildChangeHandler::init(&ts);
+        handler.register_znode_child_change_handler(ts_handler);
+        handler.unregister_znode_child_change_handler(TEST_PATH);
+
+        let event = mock_event(WatchedEventType::NodeCreated, KeeperState::SyncConnected, Some(TEST_PATH.to_string()));
+        watcher.handle(event);
+
+        let g = ts.data.lock().unwrap();
+        assert_eq!(*g, 0);
+    }
 }
