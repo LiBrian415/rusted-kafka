@@ -1,6 +1,6 @@
 use zookeeper::ZooKeeper;
 
-use super::zk_watcher::KafkaZkHandlers;
+use super::zk_watcher::{KafkaZkHandlers, ZkChangeHandler, ZkChildChangeHandler};
 
 pub struct KafkaZkClient {
     client: ZooKeeper,
@@ -88,19 +88,20 @@ impl KafkaZkClient {
         todo!();
     }
 
-    pub fn registerZNodeChangeHandler() {
-        todo!();
+    pub fn register_znode_change_handler(&self, handler: Box<dyn ZkChangeHandler>) {
+        self.handlers.register_znode_change_handler(handler);
     }
 
-    pub fn unregisterZNodeChangeHandler() {
-        todo!();
+    pub fn unregister_znode_change_handler(&self, path: &str) {
+        self.handlers.unregister_znode_change_handler(path);
     }
 
-    pub fn registerZNodeChildChangeHandler() {
-        todo!();
+    pub fn register_znode_child_change_handler(&self, handler: Box<dyn ZkChildChangeHandler>) {
+        self.handlers.register_znode_child_change_handler(handler);
     }
 
-    pub fn unregisterZNodeChildChangeHandler() {
-        todo!();
+    pub fn unregister_znode_child_change_handler(&self, path: &str) {
+        self.handlers.unregister_znode_child_change_handler(path);
     }
+
 }
