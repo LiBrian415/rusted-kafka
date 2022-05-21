@@ -1,7 +1,44 @@
+use serde::{Serialize, Deserialize};
+
+use crate::common::{broker::BrokerInfo, topic_partition::{ReplicaAssignment, LeaderAndIsr, PartitionOffset}};
+
+#[derive(Serialize, Deserialize)]
+pub struct ControllerInfo {
+    broker_id: u32
+}
+
+impl ControllerInfo {
+    fn init(broker_id: u32) -> ControllerInfo {
+        ControllerInfo { broker_id }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ControllerEpoch {
+    epoch: u128
+}
+
+impl ControllerEpoch {
+    fn init(epoch: u128) -> ControllerEpoch{
+        ControllerEpoch { epoch }
+    }
+}
+
+
 pub struct ControllerZNode {}
 impl ControllerZNode {
     pub fn path() -> String {
         "/controller".to_string()
+    }
+
+    pub fn encode(controller_id: u32) -> Vec<u8> {
+        let ci = ControllerInfo::init(controller_id);
+        serde_json::to_vec(&ci).unwrap()
+    }
+
+    pub fn decode(data: &Vec<u8>) -> u32 {
+        let ci: ControllerInfo = serde_json::from_slice(data).unwrap();
+        ci.broker_id
     }
 }
 
@@ -9,6 +46,16 @@ pub struct ControllerEpochZNode {}
 impl ControllerEpochZNode {
     pub fn path() -> String {
         "/controller_epoch".to_string()
+    }
+
+    pub fn encode(epoch: u128) -> Vec<u8> {
+        let ce = ControllerEpoch::init(epoch);
+        serde_json::to_vec(&ce).unwrap()
+    }
+
+    pub fn decode(data: &Vec<u8>) -> u128 {
+        let ce: ControllerEpoch = serde_json::from_slice(data).unwrap();
+        ce.epoch
     }
 }
 
@@ -31,6 +78,14 @@ impl BrokerIdZNode {
     pub fn path(id: u32) -> String {
         format!("{}/{}", BrokerIdsZNode::path(), id)
     }
+
+    pub fn encode(broker_info: &BrokerInfo) -> Vec<u8> {
+        serde_json::to_vec(broker_info).unwrap()
+    }
+
+    pub fn decode(data: &Vec<u8>) -> BrokerInfo {
+        serde_json::from_slice::<BrokerInfo>(data).unwrap()
+    }
 }
 
 pub struct TopicsZNode {}
@@ -44,6 +99,14 @@ pub struct TopicZNode {}
 impl TopicZNode {
     pub fn path(topic: &str) -> String {
         format!("{}/{}", TopicsZNode::path(), topic)
+    }
+
+    pub fn encode(replica_assignment: ReplicaAssignment) -> Vec<u8> {
+        serde_json::to_vec(&replica_assignment).unwrap()
+    }
+
+    pub fn decode(data: &Vec<u8>) -> ReplicaAssignment {
+        serde_json::from_slice::<ReplicaAssignment>(&data).unwrap()
     }
 }
 
@@ -66,12 +129,28 @@ impl TopicPartitionStateZNode {
     pub fn path(topic: &str, partition: u32) -> String {
         format!("{}/state", TopicPartitionZNode::path(topic, partition))
     }
+
+    pub fn encode(leader_and_isr: LeaderAndIsr) -> Vec<u8> {
+        serde_json::to_vec(&leader_and_isr).unwrap()
+    }
+
+    pub fn decode(data: &Vec<u8>) -> LeaderAndIsr {
+        serde_json::from_slice::<LeaderAndIsr>(&data).unwrap()
+    }
 }
 
 pub struct TopicPartitionOffsetZNode {}
 impl TopicPartitionOffsetZNode {
     pub fn path(topic: &str, partition: u32) -> String {
         format!("{}/offset", TopicPartitionZNode::path(topic, partition))
+    }
+
+    pub fn encode(partition_offset: PartitionOffset) -> Vec<u8> {
+        serde_json::to_vec(&partition_offset).unwrap()
+    }
+
+    pub fn decode(data: &Vec<u8>) -> PartitionOffset {
+        serde_json::from_slice::<PartitionOffset>(&data).unwrap()
     }
 }
 
