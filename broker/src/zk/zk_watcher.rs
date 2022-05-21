@@ -3,7 +3,7 @@ use std::{sync::{Arc, RwLock}, collections::HashMap};
 use zookeeper::{Watcher, WatchedEventType};
 
 pub struct KafkaZkWatcher {
-    handlers: KafkaZkHandlers
+    pub handlers: KafkaZkHandlers
 }
 
 /// Note: Adding a handler only registers it with the Handler object. It doesn't
@@ -15,8 +15,8 @@ pub struct KafkaZkWatcher {
 /// causes a cache invalidation and force the Broker to retry at some later time.
 #[derive(Clone)]
 pub struct KafkaZkHandlers {
-    change_handlers: Arc<RwLock<HashMap<String, Box<dyn ZkChangeHandler>>>>, 
-    child_change_handlers: Arc<RwLock<HashMap<String, Box<dyn ZkChildChangeHandler>>>>, 
+    pub change_handlers: Arc<RwLock<HashMap<String, Box<dyn ZkChangeHandler>>>>, 
+    pub child_change_handlers: Arc<RwLock<HashMap<String, Box<dyn ZkChildChangeHandler>>>>, 
 }
 
 pub trait ZkChangeHandler: Send + Sync {

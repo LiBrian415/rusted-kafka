@@ -154,6 +154,19 @@ impl TopicPartitionOffsetZNode {
     }
 }
 
+pub struct PersistentZkPaths {
+    pub paths: Vec<String>,
+}
+
+impl PersistentZkPaths {
+    pub fn init() -> PersistentZkPaths {
+        let mut paths: Vec<String> = Vec::new();
+        paths.push(BrokerIdsZNode::path());
+        paths.push(TopicsZNode::path());
+
+        PersistentZkPaths { paths: paths }
+    }
+}
 
 #[cfg(test)]
 mod path_tests {
