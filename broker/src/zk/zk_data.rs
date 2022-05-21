@@ -106,7 +106,7 @@ impl TopicZNode {
     }
 
     pub fn decode(data: &Vec<u8>) -> ReplicaAssignment {
-        serde_json::from_slice::<ReplicaAssignment>(&data).unwrap()
+        serde_json::from_slice::<ReplicaAssignment>(data).unwrap()
     }
 }
 
@@ -135,7 +135,7 @@ impl TopicPartitionStateZNode {
     }
 
     pub fn decode(data: &Vec<u8>) -> LeaderAndIsr {
-        serde_json::from_slice::<LeaderAndIsr>(&data).unwrap()
+        serde_json::from_slice::<LeaderAndIsr>(data).unwrap()
     }
 }
 
@@ -150,7 +150,7 @@ impl TopicPartitionOffsetZNode {
     }
 
     pub fn decode(data: &Vec<u8>) -> PartitionOffset {
-        serde_json::from_slice::<PartitionOffset>(&data).unwrap()
+        serde_json::from_slice::<PartitionOffset>(data).unwrap()
     }
 }
 
