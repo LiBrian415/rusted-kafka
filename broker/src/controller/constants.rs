@@ -1,2 +1,2 @@
-pub const InitialControllerEpoch: u128 = 0;
-pub const InitialControllerEpochZkVersion: i32 = 0;
+pub const INITIAL_CONTROLLER_EPOCH: u128 = 0;
+pub const INITIAL_CONTROLLER_EPOCH_ZK_VERSION: i32 = 0;

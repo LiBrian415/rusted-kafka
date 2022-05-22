@@ -30,7 +30,7 @@ impl ReplicaAssignment {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct LeaderAndIsr {
     leader: u32,
     isr: Vec<u32>,

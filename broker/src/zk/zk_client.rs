@@ -6,11 +6,11 @@ use std::{
 };
 
 use super::{zk_watcher::{KafkaZkHandlers, ZkChangeHandler, ZkChildChangeHandler, KafkaZkWatcher}, 
-            zk_data::{ControllerEpochZNode, ControllerZNode, BrokerIdZNode, BrokerIdsZNode, TopicsZNode, TopicPartitionsZNode, TopicZNode, TopicPartitionOffsetZNode}};
+            zk_data::{ControllerEpochZNode, ControllerZNode, BrokerIdZNode, BrokerIdsZNode, TopicsZNode, TopicPartitionsZNode, TopicZNode, TopicPartitionOffsetZNode, TopicPartitionStateZNode}};
 use super::zk_data::PersistentZkPaths;
 use crate::common::{broker::BrokerInfo, topic_partition::{ReplicaAssignment, TopicPartition, PartitionOffset, LeaderAndIsr}};
 
-use crate::controller::constants::{InitialControllerEpoch, InitialControllerEpochZkVersion};
+use crate::controller::constants::{INITIAL_CONTROLLER_EPOCH, INITIAL_CONTROLLER_EPOCH_ZK_VERSION};
 pub struct KafkaZkClient {
     client: ZooKeeper,
     handlers: KafkaZkHandlers
@@ -73,7 +73,7 @@ impl KafkaZkClient {
         
         let (curr_epoch, curr_epoch_zk_version) = match result {
             Some(info) => (info.0, info.1.version),
-            None => match self.create_controller_epoch_znode(InitialControllerEpoch) {
+            None => match self.create_controller_epoch_znode(INITIAL_CONTROLLER_EPOCH) {
                 Ok(r) => r,
                 Err(e) => return Err(e),
             }
@@ -128,7 +128,7 @@ impl KafkaZkClient {
     fn create_controller_epoch_znode(&self, epoch: u128) -> ZkResult<(u128, i32)>{
         match self.client.create(ControllerEpochZNode::path().as_str(), ControllerEpochZNode::encode(epoch),
         Acl::open_unsafe().clone(), CreateMode::Persistent) {
-            Ok(_) => Ok((InitialControllerEpoch, InitialControllerEpochZkVersion)),
+            Ok(_) => Ok((INITIAL_CONTROLLER_EPOCH, INITIAL_CONTROLLER_EPOCH_ZK_VERSION)),
             Err(e) => match e {
                 ZkError::NodeExists => match self.get_controller_epoch() {
                     Ok(resp) => match resp {
@@ -355,7 +355,15 @@ impl KafkaZkClient {
     }
 
     pub fn set_leader_and_isr(&self, leader_and_isrs: HashMap<TopicPartition, LeaderAndIsr>, controller_epoch: u128, expected_controller_epoch_zk_version: i32) -> ZkResult<bool> {
-        todo!();
+        for (partition, leader_and_isr) in leader_and_isrs.iter() {
+            match self.client.set_data(TopicPartitionStateZNode::path(partition.topic.as_str(), partition.partition).as_str(), 
+            TopicPartitionStateZNode::encode(leader_and_isr.clone()), Some(expected_controller_epoch_zk_version)) {
+                Ok(_) => {},
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(true)
     }
 
     pub fn get_topic_partition_offset(&self, topic: &str, partition: u32) -> ZkResult<Option<PartitionOffset>> {
