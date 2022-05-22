@@ -5,8 +5,8 @@ use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Eq, PartialEq, Hash, Clone)]
 pub struct TopicPartition {
-    topic: String,
-    partition: u32,
+    pub topic: String,
+    pub partition: u32,
 }
 
 impl TopicPartition {
@@ -15,11 +15,11 @@ impl TopicPartition {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct ReplicaAssignment {
-    partitions: HashMap<TopicPartition, Vec<u32>>,
-    adding_replicas: HashMap<TopicPartition, Vec<u32>>,
-    removing_replicas: HashMap<TopicPartition, Vec<u32>>,
+    pub partitions: HashMap<TopicPartition, Vec<u32>>,
+    pub adding_replicas: HashMap<TopicPartition, Vec<u32>>,
+    pub removing_replicas: HashMap<TopicPartition, Vec<u32>>,
 }
 
 impl ReplicaAssignment {

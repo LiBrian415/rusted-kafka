@@ -1,13 +1,14 @@
 use zookeeper::{ZooKeeper, ZkResult, ZkState, ZkError, Acl, Stat, CreateMode};
 use std::{
     time::{Duration, SystemTime},
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, RwLock},
 };
 
-use super::{zk_watcher::{KafkaZkHandlers, ZkChangeHandler, ZkChildChangeHandler, KafkaZkWatcher}, zk_data::{ControllerEpochZNode, ControllerZNode, BrokerIdZNode, BrokerIdsZNode}};
+use super::{zk_watcher::{KafkaZkHandlers, ZkChangeHandler, ZkChildChangeHandler, KafkaZkWatcher}, 
+            zk_data::{ControllerEpochZNode, ControllerZNode, BrokerIdZNode, BrokerIdsZNode, TopicsZNode, TopicPartitionsZNode, TopicZNode, TopicPartitionOffsetZNode}};
 use super::zk_data::PersistentZkPaths;
-use crate::common::broker::BrokerInfo;
+use crate::common::{broker::BrokerInfo, topic_partition::{ReplicaAssignment, TopicPartition, PartitionOffset, LeaderAndIsr}};
 
 use crate::controller::constants::{InitialControllerEpoch, InitialControllerEpochZkVersion};
 pub struct KafkaZkClient {
@@ -249,36 +250,132 @@ impl KafkaZkClient {
     
     // Topic + Partition
 
-    pub fn get_all_topics() {
+    pub fn get_all_topics(&self, watch: bool) -> ZkResult<HashSet<String>> {
+        match self.client.get_children(TopicsZNode::path().as_str(), watch) {
+            Ok(resp) => Ok(HashSet::from_iter(resp.iter().cloned())),
+            Err(e) => match e {
+                ZkError::NoNode => Ok(HashSet::new()),
+                _ => Err(e),
+            }
+        }
+    }
+
+    // TODO: not sure if this is correct, need to check
+    pub fn create_topic_partitions(&self, topics: Vec<String>, expected_controller_epoch_zk_version: i32) -> Vec<ZkResult<String>> {
+        let resps: Vec<ZkResult<String>> = topics.iter().map(|topic| 
+            self.client.create(TopicPartitionsZNode::path(topic).as_str(), Vec::new(), 
+                Acl::open_unsafe().clone(), CreateMode::Persistent)).collect();
+        resps
+    }
+
+    /// gets the partition numbers for the given topics
+    pub fn get_partitions_for_topics(&self, topics: Vec<String>) -> ZkResult<HashMap<String, Vec<u32>>> {
+        let mut partitions: HashMap<String, Vec<u32>> = HashMap::new();
+        match self.get_partition_assignment_for_topics(topics) {
+            Ok(partition_assignments) => {
+                for (topic, assignment) in partition_assignments.iter() {
+                    match assignment {
+                        Some(am) => {
+                            let mut partition_numbers = Vec::new();
+                            for t_partition in am.partitions.iter() {
+                                if t_partition.0.topic == topic.to_string() {
+                                    partition_numbers.push(t_partition.0.partition);
+                                }
+                            }
+                            partitions.insert(topic.to_string(), partition_numbers);
+                        },
+                        None => {
+                            partitions.insert(topic.to_string(), Vec::new());
+                        }
+                    }
+                }
+            },
+            Err(e) => return Err(e)
+        }
+
+        Ok(partitions)
+    }
+
+    fn get_partition_assignment_for_topics(&self, topics: Vec<String>) -> ZkResult<HashMap<String, Option<ReplicaAssignment>>> {
+        let mut partition_assignments = HashMap::new();
+        let resps: Vec<ZkResult<(Vec<u8>, Stat)>> = topics.iter().map(|topic| self.client.get_data(TopicZNode::path(topic).as_str(), false)).collect();
+        let mut i = 0;
+
+        for resp in resps {
+            match resp {
+                Ok(data) => {
+                    partition_assignments.insert(topics[i].clone(), Some(TopicZNode::decode(&data.0)));
+                },
+                Err(e) => match e {
+                    ZkError::NoNode => {
+                        partition_assignments.insert(topics[i].clone(), None);
+                    },
+                    _ => return Err(e)
+                }
+            }
+            i = i + 1;
+        }
+
+        Ok(partition_assignments)
+    }
+
+    pub fn get_replica_assignment_for_topics(&self, topics: Vec<String>) -> ZkResult<HashMap<String, ReplicaAssignment>> {
+        let mut replica_assignment: HashMap<String, ReplicaAssignment> = HashMap::new();
+        let resps: Vec<Result<(Vec<u8>, Stat), ZkError>> = topics.iter().map(|topic| self.client.get_data(TopicZNode::path(topic).as_str(), false)).collect();
+        let mut i = 0;
+
+        for resp in resps.iter() {
+            match resp {
+                Ok(data) => {
+                    replica_assignment.insert(topics[i].clone(), TopicZNode::decode(&data.0));
+                },
+                Err(e) => return Err(*e)
+            }
+            i = i + 1;
+        }
+
+
+        Ok(replica_assignment)
+    }
+
+    pub fn set_replica_assignment_for_topics(&self, topics: Vec<String>, replica_assignments: Vec<ReplicaAssignment>, version: Option<i32>) -> ZkResult<bool> {
+        if topics.len() != replica_assignments.len() {
+            return Err(ZkError::SystemError); // TODO: later need to change systemerror to specific error messages
+        }
+        
+        for i in 0..topics.len() {
+            match self.client.set_data(TopicZNode::path(topics[i].as_str()).as_str(), 
+            TopicZNode::encode(replica_assignments[i].clone()), version) {
+                Ok(_) => {},
+                Err(e) => return Err(e), 
+            }
+        }
+
+        Ok(true)
+    }
+
+    pub fn set_leader_and_isr(&self, leader_and_isrs: HashMap<TopicPartition, LeaderAndIsr>, controller_epoch: u128, expected_controller_epoch_zk_version: i32) -> ZkResult<bool> {
         todo!();
     }
 
-    pub fn create_topic_partitions() {
-        todo!();
+    pub fn get_topic_partition_offset(&self, topic: &str, partition: u32) -> ZkResult<Option<PartitionOffset>> {
+        match self.client.get_data(TopicPartitionOffsetZNode::path(topic, partition).as_str(), false) {
+            Ok(resp) => Ok(Some(TopicPartitionOffsetZNode::decode(&resp.0))),
+            Err(e) => match e {
+                ZkError::NoNode => Ok(None),
+                _ => Err(e),
+            }
+        }
     }
 
-    pub fn get_partitions_for_topics() {
-        todo!();
-    }
-
-    pub fn get_replica_assignment_for_topics() {
-        todo!();
-    }
-
-    pub fn set_replica_assignment_for_topics() {
-        todo!();
-    }
-
-    pub fn set_leader_and_isr() {
-        todo!();
-    }
-
-    pub fn get_topic_partition_offset() {
-        todo!();
-    }
-
-    pub fn set_topic_partition_offset() {
-        todo!();
+    pub fn set_topic_partition_offset(&self, topic: &str, partition: u32, partition_offset: PartitionOffset, version: Option<i32>) -> ZkResult<bool> {
+        match self.client.set_data(TopicPartitionOffsetZNode::path(topic, partition).as_str(), TopicPartitionOffsetZNode::encode(partition_offset), version) {
+            Ok(_) => Ok(true),
+            Err(e) => match e {
+                ZkError::BadVersion | ZkError::NoNode => Ok(false),
+                _ => Err(e)
+            }
+        }
     }
 
     // ZooKeeper
