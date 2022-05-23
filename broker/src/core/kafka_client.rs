@@ -51,9 +51,16 @@ impl KafkaClient {
         &self,
         topic: String,
         partition: u32,
+        offset: u64,
     ) -> Result<Streaming<ConsumerOutput>, Box<(dyn Error + Send + Sync)>> {
         let mut client = self.connect().await?;
-        let resp = client.consume(ConsumerInput { topic, partition }).await?;
+        let resp = client
+            .consume(ConsumerInput {
+                topic,
+                partition,
+                offset,
+            })
+            .await?;
         Ok(resp.into_inner())
     }
 }

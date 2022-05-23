@@ -94,7 +94,11 @@ impl Broker for BrokerStream {
         &self,
         request: tonic::Request<ConsumerInput>,
     ) -> Result<tonic::Response<Self::consumeStream>, tonic::Status> {
-        let ConsumerInput { topic, partition } = request.into_inner();
+        let ConsumerInput {
+            topic,
+            partition,
+            offset,
+        } = request.into_inner();
 
         let tp = TopicPartition::init(topic.as_str(), partition);
 

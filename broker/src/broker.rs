@@ -15,6 +15,8 @@ pub struct ConsumerInput {
     pub topic: ::prost::alloc::string::String,
     #[prost(uint32, tag = "2")]
     pub partition: u32,
+    #[prost(uint64, tag = "3")]
+    pub offset: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ConsumerOutput {

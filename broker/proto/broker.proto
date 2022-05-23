@@ -14,6 +14,7 @@ message ProducerInput {
 message ConsumerInput {
   string topic = 1;
   uint32 partition = 2;
+  uint64 offset = 3;
 }
 
 message ConsumerOutput {
