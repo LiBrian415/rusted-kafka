@@ -12,8 +12,8 @@ use crate::common::{broker::BrokerInfo, topic_partition::{ReplicaAssignment, Top
 
 use crate::controller::constants::{INITIAL_CONTROLLER_EPOCH, INITIAL_CONTROLLER_EPOCH_ZK_VERSION};
 pub struct KafkaZkClient {
-    client: ZooKeeper,
-    handlers: KafkaZkHandlers
+    pub client: ZooKeeper,
+    pub handlers: KafkaZkHandlers
 }
 
 impl KafkaZkClient {
@@ -247,6 +247,10 @@ impl KafkaZkClient {
 
         Ok(brokers)
     }
+
+    pub fn delete_isr_change_notifications(&self, epoch_zk_version: i32) {
+        todo!();
+    }
     
     // Topic + Partition
 
@@ -395,7 +399,7 @@ impl KafkaZkClient {
         }
     }
 
-    pub fn register_znode_change_handler(&self, handler: Box<dyn ZkChangeHandler>) {
+    pub fn register_znode_change_handler(&self, handler: Arc<Box<dyn ZkChangeHandler>>) {
         self.handlers.register_znode_change_handler(handler);
     }
 
@@ -403,7 +407,7 @@ impl KafkaZkClient {
         self.handlers.unregister_znode_change_handler(path);
     }
 
-    pub fn register_znode_child_change_handler(&self, handler: Box<dyn ZkChildChangeHandler>) {
+    pub fn register_znode_child_change_handler(&self, handler: Arc<Box<dyn ZkChildChangeHandler>>) {
         self.handlers.register_znode_child_change_handler(handler);
     }
 
