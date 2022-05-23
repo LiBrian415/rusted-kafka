@@ -18,7 +18,7 @@ const DEFAULT_SEGMENT_SIZE: usize = 1024 * 1024;
 /// newly added replicas.
 pub struct Log {
     segments: RwLock<VecDeque<LogSegment>>,
-    high_watermark: RwLock<u128>,
+    high_watermark: RwLock<u64>,
     segment_size: usize,
 }
 
@@ -44,8 +44,8 @@ impl Log {
     /// messages to the set of committed messages
     pub fn fetch_messages(
         &self,
-        start: u128,
-        fetch_max_bytes: u128,
+        start: u64,
+        fetch_max_bytes: u64,
         issued_by_client: bool,
     ) -> Vec<u8> {
         // Check if the log has available entries
@@ -54,7 +54,7 @@ impl Log {
             let r = self.high_watermark.read().unwrap();
             upper_bound = *r;
         } else {
-            upper_bound = u128::max_value();
+            upper_bound = u64::max_value();
         }
 
         let mut i = 0;
@@ -76,7 +76,7 @@ impl Log {
 
             messages.append(&mut msgs);
 
-            remaining_space = fetch_max_bytes - messages.len() as u128;
+            remaining_space = fetch_max_bytes - messages.len() as u64;
             i += 1;
 
             if reached_bound {
@@ -89,14 +89,14 @@ impl Log {
 
     /// Appends the sequence of messages into the log and returns the
     /// log end offset
-    pub fn append_messages(&self, mut messages: Vec<u8>) -> u128 {
+    pub fn append_messages(&self, mut messages: Vec<u8>) -> u64 {
         let mut w = self.segments.write().unwrap();
-        let mut prev_end: u128 = 0;
+        let mut prev_end: u64 = 0;
 
         while messages.len() > 0 {
             if let Some(segment) = (*w).back() {
                 messages = segment.append_messages(messages);
-                prev_end = segment.byte_offset + segment.get_len() as u128;
+                prev_end = segment.byte_offset + segment.get_len() as u64;
             }
 
             if messages.len() > 0 {
@@ -107,22 +107,31 @@ impl Log {
         prev_end
     }
 
-    pub fn checkpoint_high_watermark(&self, high_watermark: u128) {
+    pub fn checkpoint_high_watermark(&self, high_watermark: u64) {
         let mut w = self.high_watermark.write().unwrap();
         if *w < high_watermark {
             *w = high_watermark;
+        }
+    }
+
+    pub fn get_log_end(&self) -> u64 {
+        let r = self.segments.read().unwrap();
+        if let Some(segment) = (*r).back() {
+            segment.get_byte_offset() + segment.get_len() as u64
+        } else {
+            0
         }
     }
 }
 
 pub struct LogSegment {
     data: RwLock<Vec<u8>>,
-    byte_offset: u128,
+    byte_offset: u64,
     segment_size: usize,
 }
 
 impl LogSegment {
-    pub fn init(byte_offset: u128, segment_size: usize) -> LogSegment {
+    pub fn init(byte_offset: u64, segment_size: usize) -> LogSegment {
         LogSegment {
             data: RwLock::new(Vec::new()),
             byte_offset,
@@ -130,7 +139,7 @@ impl LogSegment {
         }
     }
 
-    pub fn get_byte_offset(&self) -> u128 {
+    pub fn get_byte_offset(&self) -> u64 {
         self.byte_offset
     }
 
@@ -141,16 +150,16 @@ impl LogSegment {
 
     pub fn fetch_messages(
         &self,
-        start: u128,
-        fetch_max_bytes: u128,
-        upper_limit: u128,
+        start: u64,
+        fetch_max_bytes: u64,
+        upper_limit: u64,
     ) -> (Vec<u8>, bool) {
         let offset = self.byte_offset;
         let mut i: usize = 0;
         let r = self.data.read().unwrap();
 
         // Find first message
-        while i < (*r).len() && (offset + i as u128) < start {
+        while i < (*r).len() && (offset + i as u64) < start {
             let len = u32::from_be_bytes((*r)[i..(i + 4)].try_into().unwrap());
             i += 4 + len as usize;
         }
@@ -161,11 +170,11 @@ impl LogSegment {
         // Add messages that are less than the upper_limit
         // Also, ensure that we don't fetch more than we can
         while i < (*r).len() {
-            if (offset + i as u128) >= upper_limit {
+            if (offset + i as u64) >= upper_limit {
                 break;
             }
             let len = u32::from_be_bytes((*r)[i..(i + 4)].try_into().unwrap());
-            if (4 + len as usize + messages.len()) as u128 > fetch_max_bytes {
+            if (4 + len as usize + messages.len()) as u64 > fetch_max_bytes {
                 reached_bound = true;
                 break;
             }
@@ -312,14 +321,14 @@ mod log_segment_tests {
         let message_set = construct_message_set(vec!["msg1", "msg2"]);
         let _ = segment.append_messages(message_set);
 
-        let (bytes, reached_max) = segment.fetch_messages(0, u128::max_value(), u128::max_value());
+        let (bytes, reached_max) = segment.fetch_messages(0, u64::max_value(), u64::max_value());
 
         let expected: Vec<String> = ["msg1", "msg2"].iter().map(|&s| s.into()).collect();
         assert!(!reached_max);
         assert_eq!(deserialize(bytes), expected);
 
         // Make sure that fetching multiple times has no side-effects
-        let (bytes, reached_max) = segment.fetch_messages(0, u128::max_value(), u128::max_value());
+        let (bytes, reached_max) = segment.fetch_messages(0, u64::max_value(), u64::max_value());
 
         let expected: Vec<String> = ["msg1", "msg2"].iter().map(|&s| s.into()).collect();
         assert!(!reached_max);
@@ -332,7 +341,7 @@ mod log_segment_tests {
         let message_set = construct_message_set(vec!["msg1", "msg2"]);
         let _ = segment.append_messages(message_set);
 
-        let (bytes, reached_max) = segment.fetch_messages(8, u128::max_value(), u128::max_value());
+        let (bytes, reached_max) = segment.fetch_messages(8, u64::max_value(), u64::max_value());
 
         let expected: Vec<String> = ["msg2"].iter().map(|&s| s.into()).collect();
         assert!(!reached_max);
@@ -345,7 +354,7 @@ mod log_segment_tests {
         let message_set = construct_message_set(vec!["msg1", "msg2"]);
         let _ = segment.append_messages(message_set);
 
-        let (bytes, reached_max) = segment.fetch_messages(0, 8, u128::max_value());
+        let (bytes, reached_max) = segment.fetch_messages(0, 8, u64::max_value());
 
         let expected: Vec<String> = ["msg1"].iter().map(|&s| s.into()).collect();
         assert!(reached_max);
@@ -358,7 +367,7 @@ mod log_segment_tests {
         let message_set = construct_message_set(vec!["msg1", "msg2"]);
         let _ = segment.append_messages(message_set);
 
-        let (bytes, reached_max) = segment.fetch_messages(0, u128::max_value(), 8);
+        let (bytes, reached_max) = segment.fetch_messages(0, u64::max_value(), 8);
 
         let expected: Vec<String> = ["msg1"].iter().map(|&s| s.into()).collect();
         assert!(!reached_max);
@@ -439,7 +448,7 @@ mod log_tests {
         let message_set = construct_message_set(vec!["msg1", "msg2", "msg3", "msg4"]);
         log.append_messages(message_set);
 
-        let bytes = log.fetch_messages(0, u128::max_value(), false);
+        let bytes = log.fetch_messages(0, u64::max_value(), false);
 
         let expected: Vec<String> = ["msg1", "msg2", "msg3", "msg4"]
             .iter()
@@ -454,7 +463,7 @@ mod log_tests {
         let message_set = construct_message_set(vec!["msg1", "msg2", "msg3", "msg4"]);
         log.append_messages(message_set);
 
-        let bytes = log.fetch_messages(0, u128::max_value(), false);
+        let bytes = log.fetch_messages(0, u64::max_value(), false);
 
         let expected: Vec<String> = ["msg1", "msg2", "msg3", "msg4"]
             .iter()
@@ -469,7 +478,7 @@ mod log_tests {
         let message_set = construct_message_set(vec!["msg1", "msg2", "msg3", "msg4"]);
         log.append_messages(message_set);
 
-        let bytes = log.fetch_messages(16, u128::max_value(), false);
+        let bytes = log.fetch_messages(16, u64::max_value(), false);
 
         let expected: Vec<String> = ["msg3", "msg4"].iter().map(|&s| s.into()).collect();
         assert_eq!(deserialize(bytes), expected);
@@ -493,13 +502,13 @@ mod log_tests {
         let message_set = construct_message_set(vec!["msg1", "msg2", "msg3", "msg4"]);
         log.append_messages(message_set);
 
-        let bytes = log.fetch_messages(0, u128::max_value(), true);
+        let bytes = log.fetch_messages(0, u64::max_value(), true);
 
         let expected: Vec<String> = Vec::new();
         assert_eq!(deserialize(bytes), expected);
 
         log.checkpoint_high_watermark(24);
-        let bytes = log.fetch_messages(0, u128::max_value(), true);
+        let bytes = log.fetch_messages(0, u64::max_value(), true);
 
         let expected: Vec<String> = ["msg1", "msg2", "msg3"].iter().map(|&s| s.into()).collect();
         assert_eq!(deserialize(bytes), expected);
