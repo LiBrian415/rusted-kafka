@@ -1,26 +1,32 @@
-use std::{sync::Arc, collections::VecDeque};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, RwLock},
+};
 
 use super::{controller::Controller, controller_events::ControllerEvent};
 
-use tokio::sync::Mutex;
-
 pub struct ControllerEventManager {
-    queue: Arc<Mutex<VecDeque<QueuedEvent>>>,
+    queue: Arc<RwLock<VecDeque<QueuedEvent>>>,
     processor: Arc<Controller>,
 }
 
 // TODO: is there a way to not use Mutex?
 impl ControllerEventManager {
     pub fn init(processor: Arc<Controller>) -> ControllerEventManager {
-        ControllerEventManager { queue: Arc::new(Mutex::new(VecDeque::new())), processor: processor }
+        ControllerEventManager {
+            queue: Arc::new(RwLock::new(VecDeque::new())),
+            processor: processor,
+        }
     }
 
-    pub async fn put(&self, event: Box<dyn ControllerEvent> ) {
-        let q_event = QueuedEvent { event: Arc::new(event)};
+    pub fn put(&self, event: Box<dyn ControllerEvent>) {
+        let q_event = QueuedEvent {
+            event: Arc::new(event),
+        };
 
-        let mut q = self.queue.lock().await;
+        let mut q = self.queue.write().unwrap();
         (*q).push_front(q_event);
-
+        std::mem::drop(q);
     }
 
     pub fn start(&self) {
@@ -28,14 +34,14 @@ impl ControllerEventManager {
     }
 }
 
-async fn event_worker(queue: Arc<Mutex<VecDeque<QueuedEvent>>>, processor: Arc<Controller>) -> () {
+async fn event_worker(queue: Arc<RwLock<VecDeque<QueuedEvent>>>, processor: Arc<Controller>) -> () {
     loop {
-        let mut q = queue.lock().await;
+        let mut q = queue.write().unwrap();
         match (*q).pop_back() {
             Some(event) => {
                 event.process(processor.clone());
-            },
-            None => {},
+            }
+            None => {}
         }
         std::mem::drop(q);
     }
