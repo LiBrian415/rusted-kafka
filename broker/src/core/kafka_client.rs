@@ -3,9 +3,7 @@ use std::error::Error;
 use tokio::sync::Mutex;
 use tonic::{transport::Channel, Streaming};
 
-use crate::broker::{
-    broker_client::BrokerClient, ConsumerInput, ConsumerOutput, ProducerInput, Void,
-};
+use crate::broker::{broker_client::BrokerClient, ConsumerInput, ConsumerOutput, ProducerInput};
 
 pub struct KafkaClient {
     addr: String,
@@ -57,10 +55,5 @@ impl KafkaClient {
         let mut client = self.connect().await?;
         let resp = client.consume(ConsumerInput { topic, partition }).await?;
         Ok(resp.into_inner())
-    }
-
-    async fn clock(&self) -> Result<Void, Box<(dyn Error + Send + Sync)>> {
-        let mut client = self.connect().await?;
-        todo!();
     }
 }

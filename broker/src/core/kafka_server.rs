@@ -100,8 +100,4 @@ impl Broker for BrokerStream {
 
         todo!();
     }
-
-    async fn clock(&self, _: tonic::Request<Void>) -> Result<tonic::Response<Void>, tonic::Status> {
-        todo!();
-    }
 }
