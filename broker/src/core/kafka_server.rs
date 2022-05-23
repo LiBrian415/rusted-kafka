@@ -12,6 +12,7 @@ use crate::{
         broker_server::{Broker, BrokerServer},
         ConsumerInput, ConsumerOutput, ProducerInput, Void,
     },
+    common::topic_partition::TopicPartition,
     zk::zk_client::KafkaZkClient,
 };
 
@@ -76,15 +77,27 @@ impl Broker for BrokerStream {
 
     async fn produce(
         &self,
-        input: tonic::Request<ProducerInput>,
+        request: tonic::Request<ProducerInput>,
     ) -> Result<tonic::Response<Void>, tonic::Status> {
+        let ProducerInput {
+            topic,
+            partition,
+            messages,
+        } = request.into_inner();
+
+        let tp = TopicPartition::init(topic.as_str(), partition);
+
         todo!();
     }
 
     async fn consume(
         &self,
-        input: tonic::Request<ConsumerInput>,
+        request: tonic::Request<ConsumerInput>,
     ) -> Result<tonic::Response<Self::consumeStream>, tonic::Status> {
+        let ConsumerInput { topic, partition } = request.into_inner();
+
+        let tp = TopicPartition::init(topic.as_str(), partition);
+
         todo!();
     }
 
