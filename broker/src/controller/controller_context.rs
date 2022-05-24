@@ -6,9 +6,9 @@ use crate::common::{
 };
 
 pub struct ControllerContext {
-    offline_partition_cnt: u32,
+    // offline_partition_cnt: u32,
     pub shuttingdown_broker_ids: HashSet<u32>,
-    pub live_brokers: HashSet<u32>,
+    pub live_brokers: HashSet<BrokerInfo>,
     live_broker_epochs: HashMap<u32, u128>,
     pub epoch: u128,
     pub epoch_zk_version: i32,
@@ -17,61 +17,123 @@ pub struct ControllerContext {
     topic_ids: HashMap<String, u32>,
     topic_names: HashMap<u32, String>,
     partition_assignments: HashMap<String, HashMap<u32, ReplicaAssignment>>,
+    partition_leadership_info: HashMap<TopicPartition, (LeaderAndIsr, u128)>,
     // replica_states: HashMap<>,
-    topics_to_be_deleted: HashSet<String>,
+    // topics_to_be_deleted: HashSet<String>,
 }
 
 impl ControllerContext {
-    pub fn add_topic_id(&self, topic: String, id: u32) {
-        todo!();
+    pub fn add_topic_id(&mut self, topic: String, id: u32) {
+        if !self.all_topics.contains(&topic) {
+            // maybe an error?
+            return;
+        }
+
+        match self.topic_ids.get(&topic) {
+            Some(existing_id) => {
+                if existing_id.clone() == id {
+                    return;
+                }
+            },
+            None => {},
+        }
+
+        match self.topic_names.get(&id) {
+            Some(existing_topic) => {
+                if existing_topic.to_string() == topic {
+                    return;
+                }
+            },
+            None => {},
+        }
+        self.topic_ids.insert(topic.clone(), id.clone());
+        self.topic_names.insert(id, topic);
+
     }
 
-    pub fn partition_replica_assignment(&self, t_partition: TopicPartition) -> Vec<u32> {
-        todo!();
+    pub fn partition_replica_assignment(&self, partition: TopicPartition) -> Vec<u32> {
+        match self.partition_assignments.get(&partition.topic) {
+            Some(partition_map) => match partition_map.get(&partition.partition) {
+                Some(replica_assignment) => match replica_assignment.partitions.get(&partition) {
+                    Some(replicas) => replicas.clone(),
+                    None => Vec::new(),
+                },
+                None => Vec::new(),
+            },
+            None => Vec::new(),
+        }
     }
 
-    pub fn set_live_brokers(&self, broker_and_epochs: HashMap<BrokerInfo, u128>) {
-        todo!();
+    pub fn set_live_brokers(&mut self, broker_and_epochs: HashMap<BrokerInfo, u128>) {
+        self.clear_live_brokers();
+        self.add_live_brokers(broker_and_epochs);
     }
 
-    fn clear_live_brokers(&self) {
-        todo!();
+    fn clear_live_brokers(&mut self) {
+        self.live_brokers.clear();
+        self.live_broker_epochs.clear();
     }
 
-    pub fn add_live_brokers(&self, broker_and_epochs: HashMap<BrokerInfo, u128>) {
-        todo!();
+    pub fn add_live_brokers(&mut self, broker_and_epochs: HashMap<BrokerInfo, u128>) {
+        let _: Vec<()> = broker_and_epochs.into_iter().map(|(broker, epoch)| {
+            self.live_brokers.insert(broker.clone());
+            self.live_broker_epochs.insert(broker.id, epoch);
+        }).collect();
     }
 
-    pub fn remove_live_brokers(&self, broker_ids: Vec<u32>) {
-        todo!();
-    }
+    // pub fn remove_live_brokers(&self, broker_ids: Vec<u32>) {
+    //     todo!();
+    // }
 
-    pub fn set_all_topics(&self, topics: HashSet<String>) {
-        todo!();
+    pub fn set_all_topics(&mut self, topics: HashSet<String>) {
+        self.all_topics.clear();
+        self.all_topics.extend(topics);
     }
 
     pub fn update_partition_full_replica_assignment(
-        &self,
-        t_partition: TopicPartition,
+        &mut self,
+        partition: TopicPartition,
         new_assignment: ReplicaAssignment,
     ) {
-        todo!();
+        match self.partition_assignments.get_mut(&partition.topic) {
+            Some(assignments) => {
+                *assignments.get_mut(&partition.partition).unwrap() = new_assignment;
+                // TODO: updatePreferredReplicaImbalanceMetric?
+            },
+            None => {},
+        }
     }
 
-    pub fn clear_partition_leadership_info(&self) {
-        todo!();
+    pub fn clear_partition_leadership_info(&mut self) {
+        self.partition_leadership_info.clear()
     }
 
     pub fn all_partitions(&self) -> Vec<TopicPartition> {
-        todo!()
+        let mut partitions: Vec<TopicPartition> = Vec::new();
+        for topic in self.partition_assignments.keys() {
+            for partition in self.partition_assignments.get(topic).unwrap().keys() {
+                partitions.push(TopicPartition {
+                    topic: topic.to_string(),
+                    partition: *partition,
+                })
+            }
+        }
+
+        partitions
     }
 
     pub fn put_partition_leadership_info(
-        &self,
+        &mut self,
         partition: TopicPartition,
         leader_isr: LeaderAndIsr,
         epoch: u128,
     ) {
-        todo!();
+        match self.partition_leadership_info.get_mut(&partition) {
+            Some(info) => {
+                *info = (leader_isr, epoch);
+                // TODO: updatePreferredReplicaImbalanceMetric?
+            },
+            None => {},
+        }
     }
 }

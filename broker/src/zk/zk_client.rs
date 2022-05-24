@@ -303,7 +303,7 @@ impl KafkaZkClient {
     }
 
     pub fn get_all_broker_and_epoch(&self) -> HashMap<BrokerInfo, u128> {
-        todo!()
+        todo!();
     }
     // Topic + Partition
 

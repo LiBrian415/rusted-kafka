@@ -89,6 +89,7 @@ impl Controller {
         }
     }
 
+    /***** Process Functions Entry Points for Events Start *****/
     fn process_startup(&self) {
         self.zk_client
             .register_znode_change_handler(Arc::new(Box::new(ControllerChangeHandler {
@@ -116,6 +117,8 @@ impl Controller {
     fn process_re_elect(&self) {
         todo!();
     }
+
+    /***** Process Functions Entry Points for Events End *****/
 
     fn elect(&self) {
         if let Ok(Some(id)) = self.zk_client.get_controller_id() {
@@ -192,7 +195,7 @@ impl Controller {
                 .live_brokers
                 .clone()
                 .into_iter()
-                .collect(),
+                .collect::<Vec<BrokerInfo>>(),
             HashSet::new(),
         );
 
@@ -269,11 +272,13 @@ impl Controller {
             Err(e) => {}
         }
     }
-    fn send_update_metadata_request(&self, brokers: Vec<u32>, partitions: HashSet<TopicPartition>) {
+    fn send_update_metadata_request(&self, brokers: Vec<BrokerInfo>, partitions: HashSet<TopicPartition>) {
+        // do this later, may need a discussion on grpc interface
         todo!();
     }
 
     fn process_topic_ids(&self, topic_id_assignment: HashSet<TopicIdReplicaAssignment>) {
+        // Add topic IDs to controller context, Do we really need topic ids tho?
         todo!();
     }
 }
