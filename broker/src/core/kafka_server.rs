@@ -1,5 +1,6 @@
 use std::{
-    net::SocketAddr,
+    error::Error,
+    net::{SocketAddr, ToSocketAddrs},
     sync::{mpsc::Sender, Arc},
 };
 
@@ -17,6 +18,20 @@ use crate::{
 };
 
 use super::{fetcher_manager::ReplicaFetcherManager, log_manager::LogManager};
+
+fn parse_socket(addr: String) -> Result<SocketAddr, Box<(dyn Error + Send + Sync)>> {
+    match addr.to_socket_addrs() {
+        Ok(mut iter) => match iter.next() {
+            Some(a) => Ok(a),
+            // Not sure how to handle no dns available for socket from given domain so just parse and error out
+            None => match addr.parse() {
+                Ok(a) => Ok(a),
+                Err(e) => return Err(Box::new(e)),
+            },
+        },
+        Err(e) => return Err(Box::new(e)),
+    }
+}
 
 fn send_ready(sender: Option<Sender<bool>>, ready: bool) -> Option<()> {
     let tx = sender?;
@@ -43,10 +58,13 @@ struct BrokerStream {
 
 impl KafkaServer {
     pub async fn startup(
-        addr: SocketAddr,
+        addrs: Vec<String>,
+        this: usize,
         ready: Option<Sender<bool>>,
         shutdown: Option<Receiver<()>>,
-    ) -> Result<(), tonic::transport::Error> {
+    ) -> Result<(), Box<(dyn Error + Send + Sync)>> {
+        let addr = parse_socket(addrs[this].to_owned())?;
+
         // let zkClient = Arc::new(KafkaZkClient::init());
 
         let logManager = Arc::new(LogManager::init());
@@ -61,13 +79,16 @@ impl KafkaServer {
             wait_shutdown(shutdown).await;
         };
 
-        server
-            .serve_with_shutdown(addr, shutdown_rx)
-            .await
-            .map_err(|e| {
+        let server_res = server.serve_with_shutdown(addr, shutdown_rx).await;
+        // Cleanup any background thread tasks here
+        // End cleanup
+        match server_res {
+            Ok(()) => Ok(()),
+            Err(e) => {
                 send_ready(ready, false);
-                e
-            })
+                Err(Box::new(e))
+            }
+        }
     }
 }
 
