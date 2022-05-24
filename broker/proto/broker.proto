@@ -19,6 +19,7 @@ message ConsumerInput {
 
 message ConsumerOutput {
   bytes messages = 1;
+  bool end = 2;
 }
 
 service Broker {

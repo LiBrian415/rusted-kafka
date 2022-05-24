@@ -22,6 +22,8 @@ pub struct ConsumerInput {
 pub struct ConsumerOutput {
     #[prost(bytes = "vec", tag = "1")]
     pub messages: ::prost::alloc::vec::Vec<u8>,
+    #[prost(bool, tag = "2")]
+    pub end: bool,
 }
 #[doc = r" Generated client implementations."]
 pub mod broker_client {

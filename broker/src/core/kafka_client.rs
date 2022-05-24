@@ -30,7 +30,7 @@ impl KafkaClient {
         }
     }
 
-    async fn produce(
+    pub async fn produce(
         &self,
         topic: String,
         partition: u32,
@@ -47,7 +47,7 @@ impl KafkaClient {
         Ok(())
     }
 
-    async fn consume(
+    pub async fn consume(
         &self,
         topic: String,
         partition: u32,
