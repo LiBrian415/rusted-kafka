@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Serialize, Deserialize, Clone, Eq, PartialEq, Hash)]
 pub struct BrokerInfo {
     pub hostname: String,
