@@ -1,7 +1,6 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
-
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Eq, PartialEq, Hash)]
 pub struct BrokerInfo {
     pub hostname: String,
     pub port: String,
@@ -10,6 +9,10 @@ pub struct BrokerInfo {
 
 impl BrokerInfo {
     pub fn init(hostname: &str, port: &str, id: u32) -> BrokerInfo {
-        BrokerInfo { hostname: hostname.to_string(), port: port.to_string(), id: id }
+        BrokerInfo {
+            hostname: hostname.to_string(),
+            port: port.to_string(),
+            id: id,
+        }
     }
 }

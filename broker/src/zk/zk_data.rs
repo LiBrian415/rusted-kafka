@@ -1,10 +1,13 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
-use crate::common::{broker::BrokerInfo, topic_partition::{ReplicaAssignment, LeaderAndIsr, PartitionOffset}};
+use crate::common::{
+    broker::BrokerInfo,
+    topic_partition::{LeaderAndIsr, PartitionOffset, ReplicaAssignment},
+};
 
 #[derive(Serialize, Deserialize)]
 pub struct ControllerInfo {
-    broker_id: u32
+    broker_id: u32,
 }
 
 impl ControllerInfo {
@@ -15,15 +18,14 @@ impl ControllerInfo {
 
 #[derive(Serialize, Deserialize)]
 pub struct ControllerEpoch {
-    epoch: u128
+    epoch: u128,
 }
 
 impl ControllerEpoch {
-    fn init(epoch: u128) -> ControllerEpoch{
+    fn init(epoch: u128) -> ControllerEpoch {
         ControllerEpoch { epoch }
     }
 }
-
 
 pub struct ControllerZNode {}
 impl ControllerZNode {
@@ -89,7 +91,7 @@ impl BrokerIdZNode {
 }
 
 pub struct TopicsZNode {}
-impl TopicsZNode{
+impl TopicsZNode {
     pub fn path() -> String {
         format!("{}/topics", BrokersZNode::path())
     }
@@ -110,14 +112,14 @@ impl TopicZNode {
     }
 }
 
-pub struct TopicPartitionsZNode{}
+pub struct TopicPartitionsZNode {}
 impl TopicPartitionsZNode {
     pub fn path(topic: &str) -> String {
         format!("{}/partitions", TopicZNode::path(topic))
     }
 }
 
-pub struct TopicPartitionZNode{}
+pub struct TopicPartitionZNode {}
 impl TopicPartitionZNode {
     pub fn path(topic: &str, partition: u32) -> String {
         format!("{}/{}", TopicPartitionsZNode::path(topic), partition)
@@ -170,7 +172,11 @@ impl PersistentZkPaths {
 
 #[cfg(test)]
 mod path_tests {
-    use crate::zk::zk_data::{ControllerZNode, ControllerEpochZNode, BrokersZNode, BrokerIdsZNode, BrokerIdZNode, TopicsZNode, TopicZNode, TopicPartitionsZNode, TopicPartitionZNode, TopicPartitionStateZNode, TopicPartitionOffsetZNode};
+    use crate::zk::zk_data::{
+        BrokerIdZNode, BrokerIdsZNode, BrokersZNode, ControllerEpochZNode, ControllerZNode,
+        TopicPartitionOffsetZNode, TopicPartitionStateZNode, TopicPartitionZNode,
+        TopicPartitionsZNode, TopicZNode, TopicsZNode,
+    };
 
     #[test]
     fn controller_path() {
@@ -209,21 +215,33 @@ mod path_tests {
 
     #[test]
     fn topic_partitions_path() {
-        assert_eq!(TopicPartitionsZNode::path("tmp"), "/broker/topics/tmp/partitions");
+        assert_eq!(
+            TopicPartitionsZNode::path("tmp"),
+            "/broker/topics/tmp/partitions"
+        );
     }
 
     #[test]
     fn topic_partition_path() {
-        assert_eq!(TopicPartitionZNode::path("tmp", 7), "/broker/topics/tmp/partitions/7");
+        assert_eq!(
+            TopicPartitionZNode::path("tmp", 7),
+            "/broker/topics/tmp/partitions/7"
+        );
     }
 
     #[test]
     fn topic_partition_state_path() {
-        assert_eq!(TopicPartitionStateZNode::path("tmp", 7), "/broker/topics/tmp/partitions/7/state");
+        assert_eq!(
+            TopicPartitionStateZNode::path("tmp", 7),
+            "/broker/topics/tmp/partitions/7/state"
+        );
     }
 
     #[test]
     fn topic_partition_offset_path() {
-        assert_eq!(TopicPartitionOffsetZNode::path("tmp", 7), "/broker/topics/tmp/partitions/7/offset");
+        assert_eq!(
+            TopicPartitionOffsetZNode::path("tmp", 7),
+            "/broker/topics/tmp/partitions/7/offset"
+        );
     }
 }
