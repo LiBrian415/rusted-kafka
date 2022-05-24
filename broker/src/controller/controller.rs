@@ -1,11 +1,14 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{Arc, RwLock},
 };
 use zookeeper::ZooKeeper;
 
 use super::{
-    change_handlers::{get_change_handlers, get_child_change_handlers, BrokerModificationHandler},
+    change_handlers::{
+        get_change_handlers, get_child_change_handlers, BrokerChangeHandler,
+        BrokerModificationHandler, TopicChangeHandler,
+    },
     constants::{
         EVENT_BROKER_CHANGE, EVENT_BROKER_MODIFICATION, EVENT_CONTROLLER_CHANGE, EVENT_RE_ELECT,
         EVENT_STARTUP, EVENT_TOPIC_CHNAGE,
@@ -24,6 +27,8 @@ use crate::{
     zk::{zk_client::KafkaZkClient, zk_watcher::KafkaZkHandlers},
 };
 
+use crate::zk::zk_watcher::{ZkChangeHandler, ZkChildChangeHandler};
+
 #[derive(Clone)]
 pub struct Controller {
     broker_id: u32,
@@ -34,6 +39,7 @@ pub struct Controller {
     em: Arc<ControllerEventManager>,
     context: Arc<RwLock<ControllerContext>>,
     // channel_manager: ControllerChannelManager,
+    broker_modification_handlers: Arc<RwLock<HashMap<u32, BrokerModificationHandler>>>,
 }
 
 impl Controller {
@@ -224,7 +230,7 @@ impl Controller {
             HashSet::new(),
         );
 
-        // starts the replica state machine
+        // TODO: starts the replica state machine
         // self.replica_state_machine.startup();
 
         // TODO: starts the partition state machine
@@ -296,9 +302,12 @@ impl Controller {
                     context.put_partition_leadership_info(partition, leader_isr, epoch);
                 }
             }
-            Err(e) => {}
+            Err(_) => {
+                // TODO
+            }
         }
     }
+
     fn send_update_metadata_request(&self, brokers: Vec<u32>, partitions: HashSet<TopicPartition>) {
         // do this later, may need a discussion on grpc interface
         todo!();
@@ -324,8 +333,38 @@ impl Controller {
             .collect::<Vec<()>>();
     }
 
+    fn unregister_broker_modification_handler(&self, brokers_id: Vec<u32>) {
+        let mut broker_modification_handlers = self.broker_modification_handlers.write().unwrap();
+
+        for id in brokers_id {
+            broker_modification_handlers.remove(&id);
+            let handler = broker_modification_handlers.get(&id).unwrap();
+            self.zk_client
+                .unregister_znode_change_handler(handler.path().as_str());
+        }
+    }
+
     fn maybe_resign(&self) {
-        todo!();
+        let was_active_before_change = self.is_active();
+
+        self.zk_client
+            .register_znode_change_handler_and_check_existence(Arc::new(Box::new(
+                ControllerChangeHandler {
+                    event_manager: self.em.clone(),
+                },
+            )));
+
+        *self.active_controller_id.write().unwrap() = match self.zk_client.get_controller_id() {
+            Ok(id_opt) => match id_opt {
+                Some(id) => id,
+                None => 0,
+            },
+            Err(_) => 0, // TODO: init value
+        };
+
+        if was_active_before_change && !self.is_active() {
+            self.on_controller_resignation();
+        }
     }
 
     fn on_broker_update(&self, _update_broker_id: u32) {
@@ -337,5 +376,41 @@ impl Controller {
                 .collect::<Vec<u32>>(),
             HashSet::new(),
         )
+    }
+
+    /* From Kafka src code:
+     * This callback is invoked by the zookeeper leader elector when the current broker resigns as the controller. This is
+     * required to clean up internal controller data structures
+     */
+    fn on_controller_resignation(&self) {
+        // TODO: unregister watchers maybe need to add more
+        let guard = self.broker_modification_handlers.read().unwrap();
+        let broker_ids: Vec<u32> = guard.keys().cloned().collect();
+        std::mem::drop(guard);
+        self.unregister_broker_modification_handler(broker_ids);
+
+        // shutdown leader rebalance scheduler?
+
+        // stop other things?
+
+        self.zk_client.unregister_znode_child_change_handler(
+            TopicChangeHandler {
+                event_manager: self.em.clone(),
+            }
+            .path()
+            .as_str(),
+        );
+
+        self.zk_client.unregister_znode_child_change_handler(
+            BrokerChangeHandler {
+                event_manager: self.em.clone(),
+            }
+            .path()
+            .as_str(),
+        );
+
+        // shutdown channel manager
+
+        self.context.write().unwrap().reset_context();
     }
 }

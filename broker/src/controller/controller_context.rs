@@ -19,7 +19,7 @@ pub struct ControllerContext {
     partition_assignments: HashMap<String, HashMap<u32, ReplicaAssignment>>,
     partition_leadership_info: HashMap<TopicPartition, (LeaderAndIsr, u128)>,
     // replica_states: HashMap<>,
-    // topics_to_be_deleted: HashSet<String>,
+    topics_to_be_deleted: HashSet<String>,
 }
 
 impl ControllerContext {
@@ -160,5 +160,20 @@ impl ControllerContext {
     pub fn update_broker_metadata(&mut self, old: BrokerInfo, new: BrokerInfo) {
         self.live_brokers.remove(&old);
         self.live_brokers.insert(new);
+    }
+
+    pub fn reset_context(&mut self) {
+        self.topics_to_be_deleted.clear();
+        // self.topics_with_deletion_started.clear();
+        // self.topics_with_ineligible_for_deletion.clear()
+        self.shuttingdown_broker_ids.clear();
+        self.epoch = 0;
+        self.epoch_zk_version = 0;
+        // self.clear_topic_state();
+        self.clear_live_brokers();
+    }
+
+    fn clear_topic_state(&self) {
+        todo!();
     }
 }

@@ -540,6 +540,13 @@ impl KafkaZkClient {
         self.handlers.register_znode_change_handler(handler);
     }
 
+    pub fn register_znode_change_handler_and_check_existence(
+        &self,
+        handler: Arc<Box<dyn ZkChangeHandler>>,
+    ) {
+        todo!();
+    }
+
     pub fn unregister_znode_change_handler(&self, path: &str) {
         self.handlers.unregister_znode_change_handler(path);
     }

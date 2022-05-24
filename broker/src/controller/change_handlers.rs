@@ -58,7 +58,7 @@ pub fn get_child_change_handlers(
 }
 
 pub struct BrokerChangeHandler {
-    event_manager: Arc<ControllerEventManager>,
+    pub event_manager: Arc<ControllerEventManager>,
 }
 
 impl ZkChildChangeHandler for BrokerChangeHandler {
@@ -115,7 +115,7 @@ impl ZkChangeHandler for BrokerModificationHandler {
 }
 
 pub struct TopicChangeHandler {
-    event_manager: Arc<ControllerEventManager>,
+    pub event_manager: Arc<ControllerEventManager>,
 }
 
 impl ZkChildChangeHandler for TopicChangeHandler {
