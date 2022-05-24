@@ -23,6 +23,24 @@ pub struct ControllerContext {
 }
 
 impl ControllerContext {
+    pub fn live_or_shutting_down_broker_ids(&self) -> HashSet<u32> {
+        HashSet::from_iter(self.live_broker_epochs.keys().map(|&id| id))
+    }
+
+    pub fn live_or_shutting_down_brokers(&self) -> HashSet<BrokerInfo> {
+        self.live_brokers.clone()
+    }
+
+    pub fn live_or_shutting_down_broker(&self, broker_id: u32) -> Option<BrokerInfo> {
+        for broker in self.live_or_shutting_down_brokers() {
+            if broker.id == broker_id {
+                return Some(broker);
+            }
+        }
+
+        None
+    }
+
     pub fn add_topic_id(&mut self, topic: String, id: u32) {
         if !self.all_topics.contains(&topic) {
             // maybe an error?
@@ -34,8 +52,8 @@ impl ControllerContext {
                 if existing_id.clone() == id {
                     return;
                 }
-            },
-            None => {},
+            }
+            None => {}
         }
 
         match self.topic_names.get(&id) {
@@ -43,12 +61,11 @@ impl ControllerContext {
                 if existing_topic.to_string() == topic {
                     return;
                 }
-            },
-            None => {},
+            }
+            None => {}
         }
         self.topic_ids.insert(topic.clone(), id.clone());
         self.topic_names.insert(id, topic);
-
     }
 
     pub fn partition_replica_assignment(&self, partition: TopicPartition) -> Vec<u32> {
@@ -75,10 +92,13 @@ impl ControllerContext {
     }
 
     pub fn add_live_brokers(&mut self, broker_and_epochs: HashMap<BrokerInfo, u128>) {
-        let _: Vec<()> = broker_and_epochs.into_iter().map(|(broker, epoch)| {
-            self.live_brokers.insert(broker.clone());
-            self.live_broker_epochs.insert(broker.id, epoch);
-        }).collect();
+        let _: Vec<()> = broker_and_epochs
+            .into_iter()
+            .map(|(broker, epoch)| {
+                self.live_brokers.insert(broker.clone());
+                self.live_broker_epochs.insert(broker.id, epoch);
+            })
+            .collect();
     }
 
     // pub fn remove_live_brokers(&self, broker_ids: Vec<u32>) {
@@ -99,8 +119,8 @@ impl ControllerContext {
             Some(assignments) => {
                 *assignments.get_mut(&partition.partition).unwrap() = new_assignment;
                 // TODO: updatePreferredReplicaImbalanceMetric?
-            },
-            None => {},
+            }
+            None => {}
         }
     }
 
@@ -132,8 +152,13 @@ impl ControllerContext {
             Some(info) => {
                 *info = (leader_isr, epoch);
                 // TODO: updatePreferredReplicaImbalanceMetric?
-            },
-            None => {},
+            }
+            None => {}
         }
+    }
+
+    pub fn update_broker_metadata(&mut self, old: BrokerInfo, new: BrokerInfo) {
+        self.live_brokers.remove(&old);
+        self.live_brokers.insert(new);
     }
 }

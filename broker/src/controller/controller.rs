@@ -5,7 +5,7 @@ use std::{
 use zookeeper::ZooKeeper;
 
 use super::{
-    change_handlers::{get_change_handlers, get_child_change_handlers},
+    change_handlers::{get_change_handlers, get_child_change_handlers, BrokerModificationHandler},
     constants::{
         EVENT_BROKER_CHANGE, EVENT_BROKER_MODIFICATION, EVENT_CONTROLLER_CHANGE, EVENT_RE_ELECT,
         EVENT_STARTUP, EVENT_TOPIC_CHNAGE,
@@ -13,16 +13,13 @@ use super::{
     controller_events::Startup,
     event_manager::ControllerEventManager,
 };
-use crate::controller::controller_events::ControllerEvent;
+use crate::controller::controller_events::{BrokerModification, ControllerEvent};
 use crate::{
     common::topic_partition::TopicIdReplicaAssignment,
     controller::controller_context::ControllerContext,
 };
 use crate::{
-    common::{
-        broker::BrokerInfo,
-        topic_partition::{TopicPartition},
-    },
+    common::{broker::BrokerInfo, topic_partition::TopicPartition},
     controller::change_handlers::ControllerChangeHandler,
     zk::{zk_client::KafkaZkClient, zk_watcher::KafkaZkHandlers},
 };
@@ -83,7 +80,13 @@ impl Controller {
             EVENT_CONTROLLER_CHANGE => self.process_controller_change(),
             EVENT_RE_ELECT => self.process_re_elect(),
             EVENT_BROKER_CHANGE => self.process_broker_change(),
-            EVENT_BROKER_MODIFICATION => self.process_broker_modification(),
+            EVENT_BROKER_MODIFICATION => self.process_broker_modification(
+                event
+                    .as_any()
+                    .downcast_ref::<BrokerModification>()
+                    .unwrap()
+                    .broker_id,
+            ),
             EVENT_TOPIC_CHNAGE => self.process_topic_change(),
             _ => {}
         }
@@ -102,8 +105,27 @@ impl Controller {
         todo!();
     }
 
-    fn process_broker_modification(&self) {
-        todo!();
+    fn process_broker_modification(&self, broker_id: u32) {
+        if !self.is_active() {
+            return;
+        }
+
+        let mut context = self.context.write().unwrap();
+        let new_meta = match self.zk_client.get_broker(broker_id) {
+            Ok(broker) => broker,
+            Err(_) => {
+                return;
+            }
+        };
+        let old_meta = context.live_or_shutting_down_broker(broker_id);
+        if !new_meta.is_none() && !old_meta.is_none() {
+            let old = old_meta.unwrap();
+            let new = new_meta.unwrap();
+            if new.hostname != old.hostname && new.port != old.port {
+                context.update_broker_metadata(old, new);
+                self.on_broker_update(broker_id);
+            }
+        }
     }
 
     fn process_topic_change(&self) {
@@ -111,14 +133,18 @@ impl Controller {
     }
 
     fn process_controller_change(&self) {
-        todo!();
+        self.maybe_resign();
     }
 
     fn process_re_elect(&self) {
-        todo!();
+        self.maybe_resign();
+        self.elect();
     }
 
     /***** Process Functions Entry Points for Events End *****/
+    fn is_active(&self) -> bool {
+        *self.active_controller_id.read().unwrap() == self.broker_id
+    }
 
     fn elect(&self) {
         if let Ok(Some(id)) = self.zk_client.get_controller_id() {
@@ -192,10 +218,9 @@ impl Controller {
             self.context
                 .read()
                 .unwrap()
-                .live_brokers
-                .clone()
+                .live_or_shutting_down_broker_ids()
                 .into_iter()
-                .collect::<Vec<BrokerInfo>>(),
+                .collect::<Vec<u32>>(),
             HashSet::new(),
         );
 
@@ -217,8 +242,8 @@ impl Controller {
 
         match self.zk_client.get_all_topics(true) {
             Ok(topics) => context.set_all_topics(topics),
-            Err(e) => {
-                // TODO
+            Err(_) => {
+                // TODO: should we return anything?
             }
         }
 
@@ -248,16 +273,18 @@ impl Controller {
                         .collect();
                 }
             }
-            Err(e) => {}
+            Err(_) => {
+                // TODO: maybe do something
+            }
         }
 
         context.clear_partition_leadership_info();
         context.shuttingdown_broker_ids.clear();
 
-        // register_broker_modification_handler(self.context.live_or_shutting_down_broker_ids);
+        self.register_broker_modification_handler(context.live_or_shutting_down_broker_ids());
         std::mem::drop(context);
         self.update_leader_and_isr_cache();
-        // start the channel manager
+        // TODO: start the channel manager
     }
 
     fn update_leader_and_isr_cache(&self) {
@@ -272,7 +299,7 @@ impl Controller {
             Err(e) => {}
         }
     }
-    fn send_update_metadata_request(&self, brokers: Vec<BrokerInfo>, partitions: HashSet<TopicPartition>) {
+    fn send_update_metadata_request(&self, brokers: Vec<u32>, partitions: HashSet<TopicPartition>) {
         // do this later, may need a discussion on grpc interface
         todo!();
     }
@@ -280,5 +307,35 @@ impl Controller {
     fn process_topic_ids(&self, topic_id_assignment: HashSet<TopicIdReplicaAssignment>) {
         // Add topic IDs to controller context, Do we really need topic ids tho?
         todo!();
+    }
+
+    fn register_broker_modification_handler(&self, broker_ids: HashSet<u32>) {
+        let _ = broker_ids
+            .iter()
+            .map(|&id| {
+                let handler = BrokerModificationHandler {
+                    event_manager: self.em.clone(),
+                    broker_id: id,
+                };
+                self.zk_client
+                    .register_znode_change_handler(Arc::new(Box::new(handler)));
+                // source code has brokerModificationsHandlers, but i dont think we need it
+            })
+            .collect::<Vec<()>>();
+    }
+
+    fn maybe_resign(&self) {
+        todo!();
+    }
+
+    fn on_broker_update(&self, _update_broker_id: u32) {
+        let context = self.context.read().unwrap();
+        self.send_update_metadata_request(
+            context
+                .live_or_shutting_down_broker_ids()
+                .into_iter()
+                .collect::<Vec<u32>>(),
+            HashSet::new(),
+        )
     }
 }

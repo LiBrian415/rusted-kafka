@@ -94,8 +94,8 @@ impl ZkChangeHandler for ControllerChangeHandler {
 }
 
 pub struct BrokerModificationHandler {
-    broker_id: u32,
-    event_manager: Arc<ControllerEventManager>,
+    pub broker_id: u32,
+    pub event_manager: Arc<ControllerEventManager>,
 }
 
 impl ZkChangeHandler for BrokerModificationHandler {
@@ -108,7 +108,9 @@ impl ZkChangeHandler for BrokerModificationHandler {
     fn handle_delete(&self) {}
 
     fn handle_data_change(&self) {
-        self.event_manager.put(Box::new(BrokerModification {}));
+        self.event_manager.put(Box::new(BrokerModification {
+            broker_id: self.broker_id,
+        }));
     }
 }
 
