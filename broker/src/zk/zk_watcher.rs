@@ -18,8 +18,8 @@ pub struct KafkaZkWatcher {
 /// causes a cache invalidation and force the Broker to retry at some later time.
 #[derive(Clone)]
 pub struct KafkaZkHandlers {
-    pub change_handlers: Arc<RwLock<HashMap<String, Arc<Box<dyn ZkChangeHandler>>>>>,
-    pub child_change_handlers: Arc<RwLock<HashMap<String, Arc<Box<dyn ZkChildChangeHandler>>>>>,
+    pub change_handlers: Arc<RwLock<HashMap<String, Arc<dyn ZkChangeHandler>>>>,
+    pub child_change_handlers: Arc<RwLock<HashMap<String, Arc<dyn ZkChildChangeHandler>>>>,
 }
 
 pub trait ZkChangeHandler: Send + Sync {
@@ -83,7 +83,7 @@ impl KafkaZkHandlers {
         }
     }
 
-    pub fn register_znode_change_handler(&self, handler: Arc<Box<dyn ZkChangeHandler>>) {
+    pub fn register_znode_change_handler(&self, handler: Arc<dyn ZkChangeHandler>) {
         let mut g = self.change_handlers.write().unwrap();
         (*g).insert(handler.path(), handler);
     }
@@ -98,7 +98,7 @@ impl KafkaZkHandlers {
         (*g).contains_key(path)
     }
 
-    pub fn register_znode_child_change_handler(&self, handler: Arc<Box<dyn ZkChildChangeHandler>>) {
+    pub fn register_znode_child_change_handler(&self, handler: Arc<dyn ZkChildChangeHandler>) {
         let mut g = self.child_change_handlers.write().unwrap();
         (*g).insert(handler.path(), handler);
     }
@@ -141,10 +141,10 @@ mod handler_tests {
     }
 
     impl TestStructChangeHandler {
-        pub fn init(ts: &TestStruct) -> Box<TestStructChangeHandler> {
-            Box::new(TestStructChangeHandler {
+        pub fn init(ts: &TestStruct) -> TestStructChangeHandler {
+            TestStructChangeHandler {
                 data: ts.data.clone(),
-            })
+            }
         }
     }
 
@@ -174,10 +174,10 @@ mod handler_tests {
     }
 
     impl TestStructChildChangeHandler {
-        pub fn init(ts: &TestStruct) -> Box<TestStructChildChangeHandler> {
-            Box::new(TestStructChildChangeHandler {
+        pub fn init(ts: &TestStruct) -> TestStructChildChangeHandler {
+            TestStructChildChangeHandler {
                 data: ts.data.clone(),
-            })
+            }
         }
     }
 
