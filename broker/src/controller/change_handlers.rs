@@ -13,22 +13,22 @@ use super::{
 pub fn get_change_handlers(
     em: Arc<ControllerEventManager>,
     bid: u32,
-) -> HashMap<String, Arc<Box<dyn ZkChangeHandler>>> {
-    let mut change_handlers: HashMap<String, Arc<Box<dyn ZkChangeHandler>>> = HashMap::new();
+) -> HashMap<String, Arc<dyn ZkChangeHandler>> {
+    let mut change_handlers: HashMap<String, Arc<dyn ZkChangeHandler>> = HashMap::new();
 
     change_handlers.insert(
         "ControllerChange".to_string(),
-        Arc::new(Box::new(ControllerChangeHandler {
+        Arc::new(ControllerChangeHandler {
             event_manager: em.clone(),
-        })),
+        }),
     );
 
     change_handlers.insert(
         "BrokerModification".to_string(),
-        Arc::new(Box::new(BrokerModificationHandler {
+        Arc::new(BrokerModificationHandler {
             broker_id: bid,
             event_manager: em.clone(),
-        })),
+        }),
     );
 
     change_handlers
@@ -36,22 +36,21 @@ pub fn get_change_handlers(
 
 pub fn get_child_change_handlers(
     em: Arc<ControllerEventManager>,
-) -> HashMap<String, Arc<Box<dyn ZkChildChangeHandler>>> {
-    let mut child_change_handlers: HashMap<String, Arc<Box<dyn ZkChildChangeHandler>>> =
-        HashMap::new();
+) -> HashMap<String, Arc<dyn ZkChildChangeHandler>> {
+    let mut child_change_handlers: HashMap<String, Arc<dyn ZkChildChangeHandler>> = HashMap::new();
 
     child_change_handlers.insert(
         "BrokerChange".to_string(),
-        Arc::new(Box::new(BrokerChangeHandler {
+        Arc::new(BrokerChangeHandler {
             event_manager: em.clone(),
-        })),
+        }),
     );
 
     child_change_handlers.insert(
         "TopicChange".to_string(),
-        Arc::new(Box::new(TopicChangeHandler {
+        Arc::new(TopicChangeHandler {
             event_manager: em.clone(),
-        })),
+        }),
     );
 
     child_change_handlers

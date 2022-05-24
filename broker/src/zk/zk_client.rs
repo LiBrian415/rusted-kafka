@@ -536,7 +536,7 @@ impl KafkaZkClient {
         }
     }
 
-    pub fn register_znode_change_handler(&self, handler: Arc<Box<dyn ZkChangeHandler>>) {
+    pub fn register_znode_change_handler(&self, handler: Arc<dyn ZkChangeHandler>) {
         self.handlers.register_znode_change_handler(handler);
     }
 
@@ -551,7 +551,7 @@ impl KafkaZkClient {
         self.handlers.unregister_znode_change_handler(path);
     }
 
-    pub fn register_znode_child_change_handler(&self, handler: Arc<Box<dyn ZkChildChangeHandler>>) {
+    pub fn register_znode_child_change_handler(&self, handler: Arc<dyn ZkChildChangeHandler>) {
         self.handlers.register_znode_child_change_handler(handler);
     }
 

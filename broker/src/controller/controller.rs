@@ -101,9 +101,9 @@ impl Controller {
     /***** Process Functions Entry Points for Events Start *****/
     fn process_startup(&self) {
         self.zk_client
-            .register_znode_change_handler(Arc::new(Box::new(ControllerChangeHandler {
+            .register_znode_change_handler(Arc::new(ControllerChangeHandler {
                 event_manager: self.em.clone(),
-            })));
+            }));
         self.elect();
     }
 
@@ -327,7 +327,7 @@ impl Controller {
                     broker_id: id,
                 };
                 self.zk_client
-                    .register_znode_change_handler(Arc::new(Box::new(handler)));
+                    .register_znode_change_handler(Arc::new(handler));
                 // source code has brokerModificationsHandlers, but i dont think we need it
             })
             .collect::<Vec<()>>();
