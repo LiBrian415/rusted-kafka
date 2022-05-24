@@ -113,7 +113,7 @@ impl Log {
             *w = high_watermark;
         }
     }
-
+  
     pub fn get_log_end(&self) -> u64 {
         let r = self.segments.read().unwrap();
         if let Some(segment) = (*r).back() {
@@ -355,7 +355,6 @@ mod log_segment_tests {
         let _ = segment.append_messages(message_set);
 
         let (bytes, reached_max) = segment.fetch_messages(0, 8, u64::max_value());
-
         let expected: Vec<String> = ["msg1"].iter().map(|&s| s.into()).collect();
         assert!(reached_max);
         assert_eq!(deserialize(bytes), expected);
@@ -464,7 +463,6 @@ mod log_tests {
         log.append_messages(message_set);
 
         let bytes = log.fetch_messages(0, u64::max_value(), false);
-
         let expected: Vec<String> = ["msg1", "msg2", "msg3", "msg4"]
             .iter()
             .map(|&s| s.into())

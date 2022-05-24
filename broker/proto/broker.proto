@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package broker;
+
+message Void {
+}
+
+message ProducerInput {
+  string topic = 1;
+  uint32 partition = 2;
+  bytes messages = 3;
+}
+
+message ConsumerInput {
+  string topic = 1;
+  uint32 partition = 2;
+  uint64 offset = 3;
+}
+
+message ConsumerOutput {
+  bytes messages = 1;
+  bool end = 2;
+}
+
+service Broker {
+  rpc produce(ProducerInput) returns (Void);
+  rpc consume(ConsumerInput) returns (stream ConsumerOutput);
+}
