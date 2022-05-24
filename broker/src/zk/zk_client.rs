@@ -455,6 +455,13 @@ impl KafkaZkClient {
         Ok(true)
     }
 
+    pub fn get_leader_and_isr(
+        &self,
+        partitions: Vec<TopicPartition>,
+    ) -> ZkResult<HashMap<TopicPartition, LeaderAndIsr>> {
+        todo!();
+    }
+
     pub fn set_leader_and_isr(
         &self,
         leader_and_isrs: HashMap<TopicPartition, LeaderAndIsr>,
