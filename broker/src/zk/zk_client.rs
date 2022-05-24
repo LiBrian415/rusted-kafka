@@ -549,7 +549,7 @@ impl KafkaZkClient {
 
     pub fn register_znode_change_handler_and_check_existence(
         &self,
-        handler: Arc<Box<dyn ZkChangeHandler>>,
+        handler: Arc<dyn ZkChangeHandler>,
     ) {
         todo!();
     }

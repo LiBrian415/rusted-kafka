@@ -113,7 +113,7 @@ impl Log {
             *w = high_watermark;
         }
     }
-  
+
     pub fn get_log_end(&self) -> u64 {
         let r = self.segments.read().unwrap();
         if let Some(segment) = (*r).back() {

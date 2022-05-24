@@ -66,7 +66,7 @@ impl ZkChildChangeHandler for BrokerChangeHandler {
     }
 
     fn handle_child_change(&self) {
-        self.event_manager.put(Box::new(BrokerChange {}));
+        self.event_manager.put(Arc::new(BrokerChange {}));
     }
 }
 
@@ -80,15 +80,15 @@ impl ZkChangeHandler for ControllerChangeHandler {
     }
 
     fn handle_create(&self) {
-        self.event_manager.put(Box::new(ControllerChange {}));
+        self.event_manager.put(Arc::new(ControllerChange {}));
     }
 
     fn handle_delete(&self) {
-        self.event_manager.put(Box::new(ReElect {}));
+        self.event_manager.put(Arc::new(ReElect {}));
     }
 
     fn handle_data_change(&self) {
-        self.event_manager.put(Box::new(ControllerChange {}));
+        self.event_manager.put(Arc::new(ControllerChange {}));
     }
 }
 
@@ -107,7 +107,7 @@ impl ZkChangeHandler for BrokerModificationHandler {
     fn handle_delete(&self) {}
 
     fn handle_data_change(&self) {
-        self.event_manager.put(Box::new(BrokerModification {
+        self.event_manager.put(Arc::new(BrokerModification {
             broker_id: self.broker_id,
         }));
     }
@@ -123,6 +123,6 @@ impl ZkChildChangeHandler for TopicChangeHandler {
     }
 
     fn handle_child_change(&self) {
-        self.event_manager.put(Box::new(TopicChange {}));
+        self.event_manager.put(Arc::new(TopicChange {}));
     }
 }
