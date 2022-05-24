@@ -18,8 +18,8 @@ pub struct KafkaZkWatcher {
 /// causes a cache invalidation and force the Broker to retry at some later time.
 #[derive(Clone)]
 pub struct KafkaZkHandlers {
-    pub change_handlers: Arc<RwLock<HashMap<String, Box<dyn ZkChangeHandler>>>>,
-    pub child_change_handlers: Arc<RwLock<HashMap<String, Box<dyn ZkChildChangeHandler>>>>,
+    pub change_handlers: Arc<RwLock<HashMap<String, Arc<Box<dyn ZkChangeHandler>>>>>,
+    pub child_change_handlers: Arc<RwLock<HashMap<String, Arc<Box<dyn ZkChildChangeHandler>>>>>,
 }
 
 pub trait ZkChangeHandler: Send + Sync {
@@ -83,7 +83,7 @@ impl KafkaZkHandlers {
         }
     }
 
-    pub fn register_znode_change_handler(&self, handler: Box<dyn ZkChangeHandler>) {
+    pub fn register_znode_change_handler(&self, handler: Arc<Box<dyn ZkChangeHandler>>) {
         let mut g = self.change_handlers.write().unwrap();
         (*g).insert(handler.path(), handler);
     }
@@ -98,7 +98,7 @@ impl KafkaZkHandlers {
         (*g).contains_key(path)
     }
 
-    pub fn register_znode_child_change_handler(&self, handler: Box<dyn ZkChildChangeHandler>) {
+    pub fn register_znode_child_change_handler(&self, handler: Arc<Box<dyn ZkChildChangeHandler>>) {
         let mut g = self.child_change_handlers.write().unwrap();
         (*g).insert(handler.path(), handler);
     }
@@ -215,7 +215,7 @@ mod handler_tests {
         let (watcher, handler) = setup();
         let ts = TestStruct::init();
         let ts_handler = TestStructChangeHandler::init(&ts);
-        handler.register_znode_change_handler(ts_handler);
+        handler.register_znode_change_handler(Arc::new(ts_handler));
 
         let event = mock_event(
             WatchedEventType::NodeCreated,
@@ -233,7 +233,7 @@ mod handler_tests {
         let (watcher, handler) = setup();
         let ts = TestStruct::init();
         let ts_handler = TestStructChangeHandler::init(&ts);
-        handler.register_znode_change_handler(ts_handler);
+        handler.register_znode_change_handler(Arc::new(ts_handler));
 
         let event = mock_event(
             WatchedEventType::NodeDeleted,
@@ -251,7 +251,7 @@ mod handler_tests {
         let (watcher, handler) = setup();
         let ts = TestStruct::init();
         let ts_handler = TestStructChangeHandler::init(&ts);
-        handler.register_znode_change_handler(ts_handler);
+        handler.register_znode_change_handler(Arc::new(ts_handler));
 
         let event = mock_event(
             WatchedEventType::NodeDataChanged,
@@ -269,7 +269,7 @@ mod handler_tests {
         let (watcher, handler) = setup();
         let ts = TestStruct::init();
         let ts_handler = TestStructChildChangeHandler::init(&ts);
-        handler.register_znode_child_change_handler(ts_handler);
+        handler.register_znode_child_change_handler(Arc::new(ts_handler));
 
         let event = mock_event(
             WatchedEventType::NodeChildrenChanged,
@@ -306,7 +306,7 @@ mod handler_tests {
         assert!(!handler.contains_znode_change_handler(TEST_PATH));
 
         let ts_handler = TestStructChangeHandler::init(&ts);
-        handler.register_znode_change_handler(ts_handler);
+        handler.register_znode_change_handler(Arc::new(ts_handler));
 
         assert!(handler.contains_znode_change_handler(TEST_PATH));
     }
@@ -317,7 +317,7 @@ mod handler_tests {
         let ts = TestStruct::init();
 
         let ts_handler = TestStructChangeHandler::init(&ts);
-        handler.register_znode_change_handler(ts_handler);
+        handler.register_znode_change_handler(Arc::new(ts_handler));
         handler.unregister_znode_change_handler(TEST_PATH);
 
         let event = mock_event(
@@ -339,7 +339,7 @@ mod handler_tests {
         assert!(!handler.contains_znode_child_change_handler(TEST_PATH));
 
         let ts_handler = TestStructChildChangeHandler::init(&ts);
-        handler.register_znode_child_change_handler(ts_handler);
+        handler.register_znode_child_change_handler(Arc::new(ts_handler));
 
         assert!(handler.contains_znode_child_change_handler(TEST_PATH));
     }
@@ -350,7 +350,7 @@ mod handler_tests {
         let ts = TestStruct::init();
 
         let ts_handler = TestStructChildChangeHandler::init(&ts);
-        handler.register_znode_child_change_handler(ts_handler);
+        handler.register_znode_child_change_handler(Arc::new(ts_handler));
         handler.unregister_znode_child_change_handler(TEST_PATH);
 
         let event = mock_event(

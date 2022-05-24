@@ -36,6 +36,16 @@ impl ReplicaAssignment {
             removing_replicas,
         }
     }
+
+    pub fn is_being_reassigned(&self) -> bool {
+        !self.adding_replicas.is_empty() || !self.removing_replicas.is_empty()
+    }
+}
+
+#[derive(Clone)]
+pub struct TopicIdReplicaAssignment {
+    pub topic: String,
+    pub assignment: HashMap<TopicPartition, ReplicaAssignment>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

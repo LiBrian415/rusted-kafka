@@ -16,13 +16,15 @@ use super::{
 };
 use crate::common::{
     broker::BrokerInfo,
-    topic_partition::{LeaderAndIsr, PartitionOffset, ReplicaAssignment, TopicPartition},
+    topic_partition::{
+        LeaderAndIsr, PartitionOffset, ReplicaAssignment, TopicIdReplicaAssignment, TopicPartition,
+    },
 };
 
 use crate::controller::constants::{INITIAL_CONTROLLER_EPOCH, INITIAL_CONTROLLER_EPOCH_ZK_VERSION};
 pub struct KafkaZkClient {
-    client: ZooKeeper,
-    handlers: KafkaZkHandlers,
+    pub client: ZooKeeper,
+    pub handlers: KafkaZkHandlers,
 }
 
 impl KafkaZkClient {
@@ -296,6 +298,13 @@ impl KafkaZkClient {
         Ok(brokers)
     }
 
+    pub fn delete_isr_change_notifications(&self, epoch_zk_version: i32) {
+        todo!();
+    }
+
+    pub fn get_all_broker_and_epoch(&self) -> HashMap<BrokerInfo, u128> {
+        todo!();
+    }
     // Topic + Partition
 
     pub fn get_all_topics(&self, watch: bool) -> ZkResult<HashSet<String>> {
@@ -511,6 +520,20 @@ impl KafkaZkClient {
         }
     }
 
+    pub fn get_topic_partition_states(
+        &self,
+        partitions: Vec<TopicPartition>,
+    ) -> ZkResult<HashMap<TopicPartition, (LeaderAndIsr, u128)>> {
+        todo!();
+    }
+
+    pub fn get_replica_assignment_and_topic_ids_for_topics(
+        &self,
+        topics: HashSet<String>,
+    ) -> ZkResult<HashSet<TopicIdReplicaAssignment>> {
+        todo!();
+    }
+
     // ZooKeeper
 
     pub fn get_children(&self, path: &str) -> ZkResult<Vec<String>> {
@@ -520,15 +543,22 @@ impl KafkaZkClient {
         }
     }
 
-    pub fn register_znode_change_handler(&self, handler: Box<dyn ZkChangeHandler>) {
+    pub fn register_znode_change_handler(&self, handler: Arc<Box<dyn ZkChangeHandler>>) {
         self.handlers.register_znode_change_handler(handler);
+    }
+
+    pub fn register_znode_change_handler_and_check_existence(
+        &self,
+        handler: Arc<Box<dyn ZkChangeHandler>>,
+    ) {
+        todo!();
     }
 
     pub fn unregister_znode_change_handler(&self, path: &str) {
         self.handlers.unregister_znode_change_handler(path);
     }
 
-    pub fn register_znode_child_change_handler(&self, handler: Box<dyn ZkChildChangeHandler>) {
+    pub fn register_znode_child_change_handler(&self, handler: Arc<Box<dyn ZkChildChangeHandler>>) {
         self.handlers.register_znode_child_change_handler(handler);
     }
 
