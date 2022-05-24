@@ -19,10 +19,8 @@ impl ControllerEventManager {
         }
     }
 
-    pub fn put(&self, event: Box<dyn ControllerEvent>) {
-        let q_event = QueuedEvent {
-            event: Arc::new(event),
-        };
+    pub fn put(&self, event: Arc<dyn ControllerEvent>) {
+        let q_event = QueuedEvent { event: event };
 
         let mut q = self.queue.write().unwrap();
         (*q).push_front(q_event);
@@ -48,7 +46,7 @@ async fn event_worker(queue: Arc<RwLock<VecDeque<QueuedEvent>>>, processor: Arc<
 }
 
 struct QueuedEvent {
-    event: Arc<Box<dyn ControllerEvent>>,
+    event: Arc<dyn ControllerEvent>,
 }
 
 impl QueuedEvent {

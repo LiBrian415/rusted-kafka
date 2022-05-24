@@ -75,12 +75,12 @@ impl Controller {
     }
 
     pub fn startup(&self) {
-        self.em.put(Box::new(Startup {}));
+        self.em.put(Arc::new(Startup {}));
         self.em.start();
     }
 
     // process functions for different events
-    pub fn process(&self, event: Arc<Box<dyn ControllerEvent>>) {
+    pub fn process(&self, event: Arc<dyn ControllerEvent>) {
         match event.state() {
             EVENT_STARTUP => self.process_startup(),
             EVENT_CONTROLLER_CHANGE => self.process_controller_change(),
@@ -348,11 +348,9 @@ impl Controller {
         let was_active_before_change = self.is_active();
 
         self.zk_client
-            .register_znode_change_handler_and_check_existence(Arc::new(Box::new(
-                ControllerChangeHandler {
-                    event_manager: self.em.clone(),
-                },
-            )));
+            .register_znode_change_handler_and_check_existence(Arc::new(ControllerChangeHandler {
+                event_manager: self.em.clone(),
+            }));
 
         *self.active_controller_id.write().unwrap() = match self.zk_client.get_controller_id() {
             Ok(id_opt) => match id_opt {
