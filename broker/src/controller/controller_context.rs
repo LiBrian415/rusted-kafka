@@ -23,6 +23,10 @@ pub struct ControllerContext {
 }
 
 impl ControllerContext {
+    pub fn init() -> ControllerContext {
+        todo!();
+    }
+
     pub fn live_or_shutting_down_broker_ids(&self) -> HashSet<u32> {
         HashSet::from_iter(self.live_broker_epochs.keys().map(|&id| id))
     }

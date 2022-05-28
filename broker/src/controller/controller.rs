@@ -1,19 +1,24 @@
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
-    sync::{Arc, RwLock},
+    rc::Rc,
+    sync::{
+        mpsc::{Receiver, SyncSender},
+        Arc, RwLock,
+    },
 };
-use zookeeper::ZooKeeper;
 
 use super::{
     change_handlers::{
-        get_change_handlers, get_child_change_handlers, BrokerChangeHandler,
-        BrokerModificationHandler, TopicChangeHandler,
+        BrokerChangeHandler, BrokerModificationHandler, ControllerChangeHandler, TopicChangeHandler,
     },
     constants::{
-        EVENT_BROKER_CHANGE, EVENT_BROKER_MODIFICATION, EVENT_CONTROLLER_CHANGE, EVENT_RE_ELECT,
-        EVENT_STARTUP, EVENT_TOPIC_CHNAGE,
+        EVENT_BROKER_CHANGE, EVENT_BROKER_MODIFICATION, EVENT_CONTROLLER_CHANGE,
+        EVENT_CONTROLLER_SHUTDOWN, EVENT_ISR_CHANGE_NOTIFICATION,
+        EVENT_LEADER_AND_ISR_RESPONSE_RECEIVED, EVENT_REGISTER_BROKER_AND_REELECT,
+        EVENT_REPLICA_LEADER_ELECTION, EVENT_RE_ELECT, EVENT_STARTUP, EVENT_TOPIC_CHNAGE,
+        EVENT_UPDATE_METADATA_RESPONSE_RECEIVED,
     },
-    controller_events::Startup,
     event_manager::ControllerEventManager,
 };
 use crate::controller::controller_events::{BrokerModification, ControllerEvent};
@@ -23,64 +28,43 @@ use crate::{
 };
 use crate::{
     common::{broker::BrokerInfo, topic_partition::TopicPartition},
-    controller::change_handlers::ControllerChangeHandler,
-    zk::{zk_client::KafkaZkClient, zk_watcher::KafkaZkHandlers},
+    zk::zk_client::KafkaZkClient,
 };
 
+use crate::controller::channel_manager::ControllerChannelManager;
+use crate::controller::partition_state_machine::PartitionStateMachine;
+use crate::controller::replica_state_machine::ReplicaStateMachine;
 use crate::zk::zk_watcher::{ZkChangeHandler, ZkChildChangeHandler};
 
-#[derive(Clone)]
 pub struct Controller {
     broker_id: u32,
-    active_controller_id: Arc<RwLock<u32>>,
+    active_controller_id: RwLock<u32>,
     zk_client: Arc<KafkaZkClient>,
-    broker_info: Arc<BrokerInfo>,
-    broker_epoch: Arc<RwLock<u128>>,
-    em: Arc<ControllerEventManager>,
-    context: Arc<RwLock<ControllerContext>>,
-    // channel_manager: ControllerChannelManager,
-    broker_modification_handlers: Arc<RwLock<HashMap<u32, BrokerModificationHandler>>>,
+    broker_info: BrokerInfo,
+    broker_epoch: u128,
+    em: ControllerEventManager,
+    event_rx: Receiver<Box<dyn ControllerEvent>>,
+    context: Rc<RefCell<ControllerContext>>,
+    channel_manager: Rc<RefCell<ControllerChannelManager>>,
+    partition_state_machine: PartitionStateMachine,
+    replica_state_machine: ReplicaStateMachine,
+    broker_modification_handlers: RwLock<HashMap<u32, BrokerModificationHandler>>,
 }
 
 impl Controller {
-    pub fn init(
-        &mut self,
-        zk_client: ZooKeeper,
-        init_broker_info: BrokerInfo,
-        init_broker_epoch: u128,
-    ) {
-        let event_manager = Arc::new(ControllerEventManager::init(Arc::new(self.clone())));
-
-        let client = KafkaZkClient {
-            client: zk_client,
-            handlers: KafkaZkHandlers {
-                change_handlers: Arc::new(RwLock::new(get_change_handlers(
-                    event_manager.clone(),
-                    init_broker_info.id,
-                ))),
-                child_change_handlers: Arc::new(RwLock::new(get_child_change_handlers(
-                    event_manager.clone(),
-                ))),
-            },
-        };
-
-        self.broker_id = init_broker_info.id;
-        self.zk_client = Arc::new(client);
-        self.broker_info = Arc::new(init_broker_info);
-        self.broker_epoch = Arc::new(RwLock::new(init_broker_epoch));
-        self.em = event_manager;
-        self.active_controller_id = Arc::new(RwLock::new(0));
-        // context: ControllerContext.init(),
-        // channel_manager: ControllerChannelManager.init(),
-    }
-
     pub fn startup(&self) {
-        self.em.put(Arc::new(Startup {}));
-        self.em.start();
+        loop {
+            match self.event_rx.recv() {
+                Ok(event) => {
+                    self.process(event);
+                }
+                Err(_) => {}
+            }
+        }
     }
 
     // process functions for different events
-    pub fn process(&self, event: Arc<dyn ControllerEvent>) {
+    pub fn process(&self, event: Box<dyn ControllerEvent>) {
         match event.state() {
             EVENT_STARTUP => self.process_startup(),
             EVENT_CONTROLLER_CHANGE => self.process_controller_change(),
@@ -94,6 +78,12 @@ impl Controller {
                     .broker_id,
             ),
             EVENT_TOPIC_CHNAGE => self.process_topic_change(),
+            EVENT_REPLICA_LEADER_ELECTION => todo!(),
+            EVENT_CONTROLLER_SHUTDOWN => todo!(),
+            EVENT_LEADER_AND_ISR_RESPONSE_RECEIVED => todo!(),
+            EVENT_UPDATE_METADATA_RESPONSE_RECEIVED => todo!(),
+            EVENT_REGISTER_BROKER_AND_REELECT => todo!(),
+            EVENT_ISR_CHANGE_NOTIFICATION => todo!(),
             _ => {}
         }
     }
@@ -116,7 +106,7 @@ impl Controller {
             return;
         }
 
-        let mut context = self.context.write().unwrap();
+        let mut context = self.context.borrow_mut();
         let new_meta = match self.zk_client.get_broker(broker_id) {
             Ok(broker) => broker,
             Err(_) => {
@@ -129,6 +119,7 @@ impl Controller {
             let new = new_meta.unwrap();
             if new.hostname != old.hostname && new.port != old.port {
                 context.update_broker_metadata(old, new);
+                std::mem::drop(context);
                 self.on_broker_update(broker_id);
             }
         }
@@ -167,11 +158,14 @@ impl Controller {
             .register_controller_and_increment_controller_epoch(self.broker_id)
         {
             Ok(resp) => {
-                let mut context = self.context.write().unwrap();
+                let mut context = self.context.borrow_mut();
                 (*context).epoch = resp.0;
                 (*context).epoch_zk_version = resp.1;
                 let mut active_id = self.active_controller_id.write().unwrap();
                 *active_id = self.broker_id;
+
+                std::mem::drop(context);
+                std::mem::drop(active_id);
 
                 self.controller_failover();
             }
@@ -181,7 +175,7 @@ impl Controller {
         };
     }
 
-    /// invoked when this broker is elected as the new controller
+    // invoked when this broker is elected as the new controller
     fn controller_failover(&self) {
         // register wathcers to get broker/topic callbacks
         let _: Vec<()> = self
@@ -212,8 +206,9 @@ impl Controller {
 
         // initialize the controller's context that holds cache objects for current topics, live brokers
         // leaders for all existing partitions
+        let context = self.context.borrow();
         self.zk_client
-            .delete_isr_change_notifications(self.context.read().unwrap().epoch_zk_version);
+            .delete_isr_change_notifications(context.epoch_zk_version);
         self.initialize_control_context();
         // TODO: delete topics here l260
 
@@ -221,9 +216,7 @@ impl Controller {
         // reason: brokers need to receive the list of live brokers from UpdateMetadata before they can
         // process LeaderAndIsrRequests that are generated by replicaStateMachine.startup()
         self.send_update_metadata_request(
-            self.context
-                .read()
-                .unwrap()
+            context
                 .live_or_shutting_down_broker_ids()
                 .into_iter()
                 .collect::<Vec<u32>>(),
@@ -243,7 +236,7 @@ impl Controller {
         // TODO: Here the source code check the "compatibility" of broker and epoch.
         // I dont really understand why they do this check, so I'll assume all brokers
         // and epoches are compatibile
-        let mut context = self.context.write().unwrap();
+        let mut context = self.context.borrow_mut();
         context.set_live_brokers(curr_broker_and_epochs);
 
         match self.zk_client.get_all_topics(true) {
@@ -294,7 +287,7 @@ impl Controller {
     }
 
     fn update_leader_and_isr_cache(&self) {
-        let mut context = self.context.write().unwrap();
+        let mut context = self.context.borrow_mut();
         let partitions = context.all_partitions();
         match self.zk_client.get_topic_partition_states(partitions) {
             Ok(leader_isr_and_epochs) => {
@@ -366,14 +359,13 @@ impl Controller {
     }
 
     fn on_broker_update(&self, _update_broker_id: u32) {
-        let context = self.context.read().unwrap();
-        self.send_update_metadata_request(
-            context
-                .live_or_shutting_down_broker_ids()
-                .into_iter()
-                .collect::<Vec<u32>>(),
-            HashSet::new(),
-        )
+        let context = self.context.borrow();
+        let broker_ids = context
+            .live_or_shutting_down_broker_ids()
+            .into_iter()
+            .collect::<Vec<u32>>();
+        std::mem::drop(context);
+        self.send_update_metadata_request(broker_ids, HashSet::new());
     }
 
     /* From Kafka src code:
@@ -409,6 +401,50 @@ impl Controller {
 
         // shutdown channel manager
 
-        self.context.write().unwrap().reset_context();
+        self.context.borrow_mut().reset_context();
     }
+}
+
+pub fn start_controller(
+    zk_client: Arc<KafkaZkClient>,
+    init_broker_info: BrokerInfo,
+    init_broker_epoch: u128,
+    event_tx: SyncSender<Box<dyn ControllerEvent>>,
+    event_rx: Receiver<Box<dyn ControllerEvent>>,
+) {
+    let id = init_broker_info.id;
+    let event_manager = ControllerEventManager::init(event_tx.clone());
+    let control_context = Rc::new(RefCell::new(ControllerContext::init()));
+    let channel_manager = Rc::new(RefCell::new(ControllerChannelManager::init(
+        control_context.clone(),
+    )));
+
+    let controller = Controller {
+        broker_id: id,
+        active_controller_id: RwLock::new(0),
+        zk_client: zk_client.clone(),
+        broker_info: init_broker_info,
+        broker_epoch: init_broker_epoch,
+        em: event_manager.clone(),
+        event_rx: event_rx,
+        context: control_context.clone(),
+        broker_modification_handlers: RwLock::new(HashMap::new()),
+        replica_state_machine: ReplicaStateMachine::init(
+            id,
+            control_context.clone(),
+            zk_client.clone(),
+            channel_manager.clone(),
+            event_manager.clone(),
+        ),
+        partition_state_machine: PartitionStateMachine::init(
+            id,
+            control_context.clone(),
+            zk_client.clone(),
+            channel_manager.clone(),
+            event_manager.clone(),
+        ),
+        channel_manager: channel_manager,
+    };
+
+    controller.startup();
 }
