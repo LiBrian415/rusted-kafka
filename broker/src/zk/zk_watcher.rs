@@ -35,7 +35,7 @@ pub trait ZkChildChangeHandler: Send + Sync {
 }
 
 impl KafkaZkWatcher {
-    fn init(handlers: KafkaZkHandlers) -> KafkaZkWatcher {
+    pub fn init(handlers: KafkaZkHandlers) -> KafkaZkWatcher {
         KafkaZkWatcher { handlers }
     }
 }

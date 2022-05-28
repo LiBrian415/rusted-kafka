@@ -12,6 +12,7 @@ use super::{
         TopicPartitionOffsetZNode, TopicPartitionStateZNode, TopicPartitionsZNode, TopicZNode,
         TopicsZNode,
     },
+    zk_helper::get_parent,
     zk_watcher::{KafkaZkHandlers, KafkaZkWatcher, ZkChangeHandler, ZkChildChangeHandler},
 };
 use crate::common::{
@@ -27,24 +28,22 @@ pub struct KafkaZkClient {
     pub handlers: KafkaZkHandlers,
 }
 
-impl KafkaZkClient {
-    pub fn init(conn_str: &str, sess_timeout: Duration) -> ZkResult<KafkaZkClient> {
-        let handlers = KafkaZkHandlers {
-            change_handlers: Arc::new(RwLock::new(HashMap::new())),
-            child_change_handlers: Arc::new(RwLock::new(HashMap::new())),
-        };
+const GET_REQUEST: u32 = 0;
+const GET_CHILDREN_REQUEST: u32 = 1;
 
-        let client = ZooKeeper::connect(
+impl KafkaZkClient {
+    pub fn init(
+        conn_str: &str,
+        sess_timeout: Duration,
+        handlers: KafkaZkHandlers,
+    ) -> ZkResult<KafkaZkClient> {
+        match ZooKeeper::connect(
             conn_str,
             sess_timeout,
-            KafkaZkWatcher {
-                handlers: handlers.clone(),
-            },
-        );
-
-        match wait_until_connected(client.as_ref().unwrap(), Duration::from_millis(10)) {
-            Ok(_) => Ok(KafkaZkClient {
-                client: client.unwrap(),
+            KafkaZkWatcher::init(handlers.clone()),
+        ) {
+            Ok(client) => Ok(KafkaZkClient {
+                client: client,
                 handlers: handlers.clone(),
             }),
             Err(e) => Err(e),
@@ -68,17 +67,51 @@ impl KafkaZkClient {
     }
 
     fn create_recursive(&self, path: &str, data: Vec<u8>) -> ZkResult<()> {
-        let path = self.client.create(
+        let res = self.client.create(
             path,
             data,
             Acl::open_unsafe().clone(),
             zookeeper::CreateMode::Persistent,
         );
 
-        // TODO: maybe we should retry
-        match path {
+        match res {
             Ok(_) => Ok(()),
-            Err(e) => Err(e),
+            Err(e1) => match e1 {
+                ZkError::NoNode => match self.recursive_create(get_parent(path).as_str()) {
+                    Ok(_) => Ok(()),
+                    Err(e2) => match e2 {
+                        ZkError::NodeExists => Ok(()),
+                        _ => Err(e2),
+                    },
+                },
+                ZkError::NodeExists => Ok(()),
+                _ => Err(e1),
+            },
+        }
+    }
+
+    fn recursive_create(&self, path: &str) -> ZkResult<()> {
+        if path == "" {
+            return Ok(());
+        }
+
+        match self.client.create(
+            path,
+            Vec::new(),
+            Acl::open_unsafe().clone(),
+            zookeeper::CreateMode::Persistent,
+        ) {
+            Ok(_) => Ok(()),
+            Err(e1) => match e1 {
+                ZkError::NoNode => match self.recursive_create(get_parent(path).as_str()) {
+                    Ok(_) => Ok(()),
+                    Err(e2) => match e2 {
+                        ZkError::NodeExists => Ok(()),
+                        _ => Err(e2),
+                    },
+                },
+                _ => Err(e1),
+            },
         }
     }
 
@@ -180,10 +213,20 @@ impl KafkaZkClient {
     }
 
     fn get_controller_epoch(&self) -> ZkResult<Option<(u128, Stat)>> {
-        match self
-            .client
-            .get_data(ControllerEpochZNode::path().as_str(), true)
-        {
+        let path = ControllerEpochZNode::path();
+        let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
+            Ok(res) => res,
+            Err(_) => false,
+        };
+
+        let result = match watch {
+            true => self
+                .client
+                .get_data_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+            false => self.client.get_data(path.as_str(), false),
+        };
+
+        match result {
             Ok(resp) => Ok(Some((ControllerEpochZNode::decode(&resp.0), resp.1))),
             Err(e) => match e {
                 ZkError::NoNode => Ok(None),
@@ -193,7 +236,19 @@ impl KafkaZkClient {
     }
 
     pub fn get_controller_id(&self) -> ZkResult<Option<u32>> {
-        match self.client.get_data(ControllerZNode::path().as_str(), true) {
+        let path = ControllerZNode::path();
+        let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
+            Ok(res) => res,
+            Err(_) => false,
+        };
+
+        let result = match watch {
+            true => self
+                .client
+                .get_data_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+            false => self.client.get_data(path.as_str(), false),
+        };
+        match result {
             Ok(resp) => Ok(Some(ControllerZNode::decode(&resp.0))),
             Err(e) => match e {
                 ZkError::NoNode => Ok(None),
@@ -261,17 +316,39 @@ impl KafkaZkClient {
     }
 
     fn get_stat_after_node_exists(&self, path: &str) -> ZkResult<Stat> {
-        match self.client.exists(path, false) {
-            Ok(resp) => Ok(resp.unwrap()),
+        let watch = match self.should_watch(path.to_string(), GET_REQUEST, true) {
+            Ok(watch) => watch,
+            Err(_) => false,
+        };
+
+        let result = match watch {
+            true => self
+                .client
+                .get_data_w(path, KafkaZkWatcher::init(self.handlers.clone())),
+            false => self.client.get_data(path, false),
+        };
+
+        match result {
+            Ok(resp) => Ok(resp.1),
             Err(e) => Err(e),
         }
     }
 
     pub fn get_broker(&self, broker_id: u32) -> ZkResult<Option<BrokerInfo>> {
-        match self
-            .client
-            .get_data(BrokerIdZNode::path(broker_id).as_str(), false)
-        {
+        let path = BrokerIdZNode::path(broker_id);
+        let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
+            Ok(watch) => watch,
+            Err(_) => false,
+        };
+
+        let result = match watch {
+            true => self
+                .client
+                .get_data_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+            false => self.client.get_data(path.as_str(), false),
+        };
+
+        match result {
             Ok(data) => Ok(Some(BrokerIdZNode::decode(&data.0))),
             Err(e) => match e {
                 ZkError::NoNode => Ok(None),
@@ -281,15 +358,16 @@ impl KafkaZkClient {
     }
 
     pub fn get_all_brokers(&self) -> ZkResult<Vec<Option<BrokerInfo>>> {
-        let broker_ids: Vec<u32> = match self.get_children(BrokerIdsZNode::path().as_str()) {
+        let mut broker_ids: Vec<u32> = match self.get_children(BrokerIdsZNode::path().as_str()) {
             Ok(list) => list.iter().map(|id| id.parse::<u32>().unwrap()).collect(),
             Err(e) => return Err(e),
         };
+        broker_ids.sort();
 
         let mut brokers: Vec<Option<BrokerInfo>> = Vec::new();
 
-        for id in broker_ids.iter() {
-            match self.get_broker(*id) {
+        for id in broker_ids {
+            match self.get_broker(id) {
                 Ok(info) => brokers.push(info),
                 Err(e) => return Err(e),
             }
@@ -537,21 +615,46 @@ impl KafkaZkClient {
     // ZooKeeper
 
     pub fn get_children(&self, path: &str) -> ZkResult<Vec<String>> {
-        match self.client.get_children(path, false) {
-            Ok(resp) => Ok(resp),
-            Err(e) => Err(e),
-        }
-    }
+        let watch = match self.should_watch(path.to_string(), GET_CHILDREN_REQUEST, true) {
+            Ok(watch) => watch,
+            Err(_) => false,
+        };
 
-    pub fn register_znode_change_handler(&self, handler: Arc<dyn ZkChangeHandler>) {
-        self.handlers.register_znode_change_handler(handler);
+        let result = match watch {
+            true => self
+                .client
+                .get_children_w(path, KafkaZkWatcher::init(self.handlers.clone())),
+            false => self.client.get_children(path, false),
+        };
+
+        match result {
+            Ok(resp) => Ok(resp),
+            Err(e) => match e {
+                ZkError::NoNode => Ok(Vec::new()),
+                _ => Err(e),
+            },
+        }
     }
 
     pub fn register_znode_change_handler_and_check_existence(
         &self,
         handler: Arc<dyn ZkChangeHandler>,
-    ) {
-        todo!();
+    ) -> ZkResult<bool> {
+        self.register_znode_change_handler(handler.clone());
+        match self.client.exists_w(
+            handler.path().as_str(),
+            KafkaZkWatcher::init(self.handlers.clone()),
+        ) {
+            Ok(_) => Ok(true),
+            Err(e) => match e {
+                ZkError::NoNode => Ok(false),
+                _ => Err(e),
+            },
+        }
+    }
+
+    pub fn register_znode_change_handler(&self, handler: Arc<dyn ZkChangeHandler>) {
+        self.handlers.register_znode_change_handler(handler);
     }
 
     pub fn unregister_znode_change_handler(&self, path: &str) {
@@ -565,30 +668,24 @@ impl KafkaZkClient {
     pub fn unregister_znode_child_change_handler(&self, path: &str) {
         self.handlers.unregister_znode_child_change_handler(path);
     }
-}
 
-fn wait_until_connected(client: &ZooKeeper, timeout: Duration) -> ZkResult<()> {
-    // TODO: need to check correctness
-    let mut state: ZkState = ZkState::Closed;
-    client.add_listener(move |state| {
-        let start = SystemTime::now();
-        while state != ZkState::Connected && state != ZkState::Connecting {
-            if start.elapsed().unwrap() >= timeout {
-                eprintln!("Connection timeout");
-                break;
+    fn should_watch(&self, path: String, req_type: u32, register_watch: bool) -> ZkResult<bool> {
+        match req_type {
+            GET_CHILDREN_REQUEST => {
+                let handlers = self.handlers.child_change_handlers.read().unwrap();
+                match handlers.get(&path) {
+                    Some(_) => Ok(true && register_watch),
+                    None => Ok(false),
+                }
             }
+            GET_REQUEST => {
+                let handlers = self.handlers.change_handlers.read().unwrap();
+                match handlers.get(&path) {
+                    Some(_) => Ok(true),
+                    None => Ok(false),
+                }
+            }
+            _ => Err(ZkError::NoAuth),
         }
-
-        if state == ZkState::AuthFailed {
-            eprintln!("Conntion AuthFailed");
-        } else if state == ZkState::Closed {
-            eprintln!("Connection closed");
-        }
-    });
-
-    if state != ZkState::Connected || state != ZkState::ConnectedReadOnly {
-        return Err(ZkError::SystemError);
-    } else {
-        return Ok(());
     }
 }
