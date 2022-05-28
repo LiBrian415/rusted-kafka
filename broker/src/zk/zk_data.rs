@@ -1,8 +1,12 @@
+use std::collections::{HashMap, HashSet};
+
 use serde::{Deserialize, Serialize};
 
 use crate::common::{
     broker::BrokerInfo,
-    topic_partition::{LeaderAndIsr, PartitionOffset, ReplicaAssignment},
+    topic_partition::{
+        LeaderAndIsr, PartitionOffset, ReplicaAssignment, TopicIdReplicaAssignment, TopicPartition,
+    },
 };
 
 #[derive(Serialize, Deserialize)]
@@ -110,6 +114,32 @@ impl TopicZNode {
     pub fn decode(data: &Vec<u8>) -> ReplicaAssignment {
         serde_json::from_slice::<ReplicaAssignment>(data).unwrap()
     }
+
+    pub fn decode_with_topic(topic: String, data: &Vec<u8>) -> TopicIdReplicaAssignment {
+        let replica_assignment = serde_json::from_slice::<ReplicaAssignment>(data).unwrap();
+        let partitions: Vec<TopicPartition> =
+            replica_assignment.partitions.keys().cloned().collect();
+
+        let mut assignment: HashMap<TopicPartition, ReplicaAssignment> = HashMap::new();
+        for partition in partitions {
+            let mut new_replica_assignment = replica_assignment.clone();
+            new_replica_assignment
+                .partitions
+                .retain(|k, _| *k == partition);
+            new_replica_assignment
+                .adding_replicas
+                .retain(|k, _| *k == partition);
+            new_replica_assignment
+                .removing_replicas
+                .retain(|k, _| *k == partition);
+            assignment.insert(partition, new_replica_assignment);
+        }
+
+        TopicIdReplicaAssignment {
+            topic: topic,
+            assignment: assignment,
+        }
+    }
 }
 
 pub struct TopicPartitionsZNode {}
@@ -153,6 +183,51 @@ impl TopicPartitionOffsetZNode {
 
     pub fn decode(data: &Vec<u8>) -> PartitionOffset {
         serde_json::from_slice::<PartitionOffset>(data).unwrap()
+    }
+}
+
+pub struct IsrChangeNotificationZNode {}
+impl IsrChangeNotificationZNode {
+    pub fn path(seq_num: String) -> String {
+        format!("/isr_change_notification/isr_change_{}", seq_num).to_string()
+    }
+
+    pub fn encode(partitions: HashSet<TopicPartition>) -> Vec<u8> {
+        todo!();
+    }
+
+    pub fn decode(data: &Vec<u8>) -> HashSet<TopicPartition> {
+        todo!();
+    }
+
+    pub fn seq_num(path: String) -> String {
+        let prefix = "/isr_change_notification/isr_change_".to_string();
+        path[prefix.len()..].to_string()
+    }
+}
+
+pub struct IsrChangeNotificationSequenceZNode {}
+impl IsrChangeNotificationSequenceZNode {
+    pub fn path(seq_num: String) -> String {
+        format!(
+            "{}/isr_change_{}",
+            IsrChangeNotificationZNode::path("".to_string()), // TODO: need to check
+            seq_num
+        )
+        .to_string()
+    }
+
+    pub fn encode(partitions: HashSet<TopicPartition>) -> Vec<u8> {
+        todo!();
+    }
+
+    pub fn decode(data: &Vec<u8>) -> HashSet<TopicPartition> {
+        todo!();
+    }
+
+    pub fn seq_num(path: String) -> String {
+        let prefix = "/isr_change_notification/isr_change_".to_string();
+        path[prefix.len()..].to_string()
     }
 }
 

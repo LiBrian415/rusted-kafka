@@ -5,7 +5,10 @@ use std::{
 };
 use zookeeper::{Acl, CreateMode, Stat, ZkError, ZkResult, ZkState, ZooKeeper};
 
-use super::zk_data::PersistentZkPaths;
+use super::zk_data::{
+    IsrChangeNotificationSequenceZNode, IsrChangeNotificationZNode, PersistentZkPaths,
+    TopicPartitionZNode,
+};
 use super::{
     zk_data::{
         BrokerIdZNode, BrokerIdsZNode, ControllerEpochZNode, ControllerZNode,
@@ -357,6 +360,7 @@ impl KafkaZkClient {
         }
     }
 
+    // TODO
     pub fn get_all_brokers(&self) -> ZkResult<Vec<Option<BrokerInfo>>> {
         let mut broker_ids: Vec<u32> = match self.get_children(BrokerIdsZNode::path().as_str()) {
             Ok(list) => list.iter().map(|id| id.parse::<u32>().unwrap()).collect(),
@@ -376,20 +380,96 @@ impl KafkaZkClient {
         Ok(brokers)
     }
 
-    pub fn delete_isr_change_notifications(&self, epoch_zk_version: i32) {
-        todo!();
+    pub fn delete_isr_change_notifications(&self, epoch_zk_version: i32) -> ZkResult<()> {
+        let path = IsrChangeNotificationZNode::path("".to_string());
+        let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
+            Ok(watch) => watch,
+            Err(_) => false,
+        };
+
+        let result = match watch {
+            true => self
+                .client
+                .get_children_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+            false => self.client.get_children(path.as_str(), false),
+        };
+
+        match result {
+            Ok(data) => {
+                self.delete_isr_change_notifications_with_sequence_num(
+                    data.iter()
+                        .map(|child| IsrChangeNotificationZNode::seq_num(child.to_string()))
+                        .collect(),
+                    epoch_zk_version,
+                );
+            }
+            Err(e) => match e {
+                ZkError::NoNode => {}
+                _ => return Err(e),
+            },
+        };
+
+        Ok(())
     }
 
-    pub fn get_all_broker_and_epoch(&self) -> HashMap<BrokerInfo, u128> {
-        todo!();
+    pub fn delete_isr_change_notifications_with_sequence_num(
+        &self,
+        seq_num: Vec<String>,
+        version: i32,
+    ) -> ZkResult<()> {
+        for num in seq_num {
+            let _ = self.client.delete(
+                IsrChangeNotificationSequenceZNode::path(num).as_str(),
+                Some(version),
+            );
+        }
+
+        Ok(())
+    }
+    pub fn get_all_broker_and_epoch(&self) -> ZkResult<HashMap<BrokerInfo, i64>> {
+        let mut broker_ids: Vec<u32> = match self.get_children(BrokerIdsZNode::path().as_str()) {
+            Ok(list) => list.iter().map(|id| id.parse::<u32>().unwrap()).collect(),
+            Err(e) => return Err(e),
+        };
+        broker_ids.sort();
+
+        let mut brokers: HashMap<BrokerInfo, i64> = HashMap::new();
+
+        for id in broker_ids {
+            match self
+                .client
+                .get_data(BrokerIdZNode::path(id).as_str(), false)
+            {
+                Ok(data) => {
+                    brokers.insert(BrokerIdZNode::decode(&data.0), data.1.czxid);
+                }
+                Err(e) => match e {
+                    ZkError::NoNode => {}
+                    _ => return Err(e),
+                },
+            };
+        }
+
+        Ok(brokers)
     }
     // Topic + Partition
 
-    pub fn get_all_topics(&self, watch: bool) -> ZkResult<HashSet<String>> {
-        match self
-            .client
-            .get_children(TopicsZNode::path().as_str(), watch)
+    pub fn get_all_topics(&self, register_watch: bool) -> ZkResult<HashSet<String>> {
+        let path = TopicsZNode::path();
+        let watch = match self.should_watch(path.to_string(), GET_CHILDREN_REQUEST, register_watch)
         {
+            Ok(watch) => watch,
+            Err(_) => false,
+        };
+
+        let result = match watch {
+            true => self
+                .client
+                .get_children_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+            false => self.client.get_children(path.as_str(), false),
+        };
+
+        match result {
             Ok(resp) => Ok(HashSet::from_iter(resp.iter().cloned())),
             Err(e) => match e {
                 ZkError::NoNode => Ok(HashSet::new()),
@@ -398,12 +478,7 @@ impl KafkaZkClient {
         }
     }
 
-    // TODO: not sure if this is correct, need to check
-    pub fn create_topic_partitions(
-        &self,
-        topics: Vec<String>,
-        expected_controller_epoch_zk_version: i32,
-    ) -> Vec<ZkResult<String>> {
+    fn create_topic_partitions(&self, topics: Vec<String>) -> Vec<ZkResult<String>> {
         let resps: Vec<ZkResult<String>> = topics
             .iter()
             .map(|topic| {
@@ -418,6 +493,50 @@ impl KafkaZkClient {
         resps
     }
 
+    fn create_topic_partition(&self, partitions: Vec<TopicPartition>) -> Vec<ZkResult<String>> {
+        let resps: Vec<ZkResult<String>> = partitions
+            .iter()
+            .map(|partition| {
+                self.client.create(
+                    TopicPartitionZNode::path(partition.topic.as_str(), partition.partition)
+                        .as_str(),
+                    Vec::new(),
+                    Acl::open_unsafe().clone(),
+                    CreateMode::Persistent,
+                )
+            })
+            .collect();
+
+        resps
+    }
+
+    pub fn create_topic_partition_state(
+        &self,
+        leader_isr_and_epoch: HashMap<TopicPartition, LeaderAndIsr>,
+    ) -> Vec<ZkResult<String>> {
+        self.create_topic_partitions(
+            leader_isr_and_epoch
+                .iter()
+                .map(|(partition, _)| partition.topic.clone())
+                .collect(),
+        );
+
+        self.create_topic_partition(leader_isr_and_epoch.keys().cloned().collect());
+
+        leader_isr_and_epoch
+            .iter()
+            .map(|(partition, leader_and_isr)| {
+                self.client.create(
+                    TopicPartitionStateZNode::path(partition.topic.as_str(), partition.partition)
+                        .as_str(),
+                    TopicPartitionStateZNode::encode(leader_and_isr.clone()),
+                    Acl::open_unsafe().clone(),
+                    CreateMode::Persistent,
+                )
+            })
+            .collect()
+    }
+
     /// gets the partition numbers for the given topics
     pub fn get_partitions_for_topics(
         &self,
@@ -430,9 +549,9 @@ impl KafkaZkClient {
                     match assignment {
                         Some(am) => {
                             let mut partition_numbers = Vec::new();
-                            for t_partition in am.partitions.iter() {
-                                if t_partition.0.topic == topic.to_string() {
-                                    partition_numbers.push(t_partition.0.partition);
+                            for partition in am.partitions.iter() {
+                                if partition.0.topic == topic.to_string() {
+                                    partition_numbers.push(partition.0.partition);
                                 }
                             }
                             partitions.insert(topic.to_string(), partition_numbers);
@@ -457,8 +576,17 @@ impl KafkaZkClient {
         let resps: Vec<ZkResult<(Vec<u8>, Stat)>> = topics
             .iter()
             .map(|topic| {
-                self.client
-                    .get_data(TopicZNode::path(topic).as_str(), false)
+                let path = TopicZNode::path(topic);
+                let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
+                    Ok(resp) => resp,
+                    Err(_) => false,
+                };
+                match watch {
+                    true => self
+                        .client
+                        .get_data_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+                    false => self.client.get_data(path.as_str(), false),
+                }
             })
             .collect();
         let mut i = 0;
@@ -482,26 +610,40 @@ impl KafkaZkClient {
         Ok(partition_assignments)
     }
 
-    pub fn get_replica_assignment_for_topics(
+    pub fn get_full_replica_assignment_for_topics(
         &self,
         topics: Vec<String>,
-    ) -> ZkResult<HashMap<String, ReplicaAssignment>> {
-        let mut replica_assignment: HashMap<String, ReplicaAssignment> = HashMap::new();
+    ) -> ZkResult<HashMap<TopicPartition, ReplicaAssignment>> {
+        let mut replica_assignment: HashMap<TopicPartition, ReplicaAssignment> = HashMap::new();
         let resps: Vec<Result<(Vec<u8>, Stat), ZkError>> = topics
             .iter()
             .map(|topic| {
-                self.client
-                    .get_data(TopicZNode::path(topic).as_str(), false)
+                let path = TopicZNode::path(topic);
+                let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
+                    Ok(resp) => resp,
+                    Err(_) => false,
+                };
+                match watch {
+                    true => self
+                        .client
+                        .get_data_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+                    false => self.client.get_data(path.as_str(), false),
+                }
             })
             .collect();
         let mut i = 0;
 
-        for resp in resps.iter() {
+        for resp in resps {
             match resp {
                 Ok(data) => {
-                    replica_assignment.insert(topics[i].clone(), TopicZNode::decode(&data.0));
+                    replica_assignment.extend(
+                        TopicZNode::decode_with_topic(topics[i].clone(), &data.0).assignment,
+                    );
                 }
-                Err(e) => return Err(*e),
+                Err(e) => match e {
+                    ZkError::NoNode => {}
+                    _ => return Err(e),
+                },
             }
             i = i + 1;
         }
@@ -537,13 +679,38 @@ impl KafkaZkClient {
         &self,
         partitions: Vec<TopicPartition>,
     ) -> ZkResult<HashMap<TopicPartition, LeaderAndIsr>> {
-        todo!();
+        let mut leader_and_isr: HashMap<TopicPartition, LeaderAndIsr> = HashMap::new();
+
+        for partition in partitions {
+            let path =
+                TopicPartitionStateZNode::path(partition.topic.as_str(), partition.partition);
+            let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
+                Ok(watch) => watch,
+                Err(_) => false,
+            };
+
+            let result = match watch {
+                true => self
+                    .client
+                    .get_data_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+                false => self.client.get_data(path.as_str(), false),
+            };
+
+            match result {
+                Ok(resp) => {
+                    leader_and_isr.insert(partition, TopicPartitionStateZNode::decode(&resp.0));
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(leader_and_isr)
     }
 
     pub fn set_leader_and_isr(
         &self,
         leader_and_isrs: HashMap<TopicPartition, LeaderAndIsr>,
-        controller_epoch: u128,
+        // controller_epoch: u128, maybe we dont need this since we include controller_epoch in LeaderAndIsr
         expected_controller_epoch_zk_version: i32,
     ) -> ZkResult<bool> {
         for (partition, leader_and_isr) in leader_and_isrs.iter() {
@@ -566,10 +733,19 @@ impl KafkaZkClient {
         topic: &str,
         partition: u32,
     ) -> ZkResult<Option<PartitionOffset>> {
-        match self.client.get_data(
-            TopicPartitionOffsetZNode::path(topic, partition).as_str(),
-            false,
-        ) {
+        let path = TopicPartitionOffsetZNode::path(topic, partition);
+        let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
+            Ok(resp) => resp,
+            Err(_) => false,
+        };
+
+        let result = match watch {
+            true => self
+                .client
+                .get_data_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+            false => self.client.get_data(path.as_str(), false),
+        };
+        match result {
             Ok(resp) => Ok(Some(TopicPartitionOffsetZNode::decode(&resp.0))),
             Err(e) => match e {
                 ZkError::NoNode => Ok(None),
@@ -601,15 +777,74 @@ impl KafkaZkClient {
     pub fn get_topic_partition_states(
         &self,
         partitions: Vec<TopicPartition>,
-    ) -> ZkResult<HashMap<TopicPartition, (LeaderAndIsr, u128)>> {
-        todo!();
+    ) -> ZkResult<HashMap<TopicPartition, LeaderAndIsr>> {
+        let mut partition_states: HashMap<TopicPartition, LeaderAndIsr> = HashMap::new();
+
+        for partition in partitions {
+            let path =
+                TopicPartitionStateZNode::path(partition.topic.as_str(), partition.partition);
+            let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
+                Ok(watch) => watch,
+                Err(_) => false,
+            };
+            let result = match watch {
+                true => self
+                    .client
+                    .get_data_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+                false => self.client.get_data(path.as_str(), false),
+            };
+
+            match result {
+                Ok(resp) => {
+                    partition_states
+                        .insert(partition.clone(), TopicPartitionStateZNode::decode(&resp.0));
+                }
+                Err(e) => match e {
+                    ZkError::NoNode => {}
+                    _ => return Err(e),
+                },
+            };
+        }
+
+        Ok(partition_states)
     }
 
     pub fn get_replica_assignment_and_topic_ids_for_topics(
         &self,
         topics: HashSet<String>,
-    ) -> ZkResult<HashSet<TopicIdReplicaAssignment>> {
-        todo!();
+    ) -> ZkResult<Vec<TopicIdReplicaAssignment>> {
+        let mut topic_replica_assignment: Vec<TopicIdReplicaAssignment> = Vec::new();
+
+        for topic in topics {
+            let path = TopicZNode::path(topic.as_str());
+            let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
+                Ok(watch) => watch,
+                Err(_) => false,
+            };
+            let result = match watch {
+                true => self
+                    .client
+                    .get_data_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+                false => self.client.get_data(path.as_str(), false),
+            };
+
+            match result {
+                Ok(resp) => {
+                    topic_replica_assignment.push(TopicZNode::decode_with_topic(topic, &resp.0));
+                }
+                Err(e) => match e {
+                    ZkError::NoNode => {
+                        topic_replica_assignment.push(TopicIdReplicaAssignment {
+                            topic: topic,
+                            assignment: HashMap::new(),
+                        });
+                    }
+                    _ => return Err(e),
+                },
+            };
+        }
+
+        Ok(topic_replica_assignment)
     }
 
     // ZooKeeper

@@ -52,7 +52,7 @@ pub struct TopicIdReplicaAssignment {
 pub struct LeaderAndIsr {
     leader: u32,
     isr: Vec<u32>,
-    controller_epoch: u128,
+    pub controller_epoch: u128,
     leader_epoch: u128,
 }
 

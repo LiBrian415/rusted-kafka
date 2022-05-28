@@ -232,7 +232,12 @@ impl Controller {
     }
 
     fn initialize_control_context(&self) {
-        let curr_broker_and_epochs = self.zk_client.get_all_broker_and_epoch();
+        let curr_broker_and_epochs = match self.zk_client.get_all_broker_and_epoch() {
+            Ok(data) => data,
+            Err(_) => {
+                return;
+            }
+        };
         // TODO: Here the source code check the "compatibility" of broker and epoch.
         // I dont really understand why they do this check, so I'll assume all brokers
         // and epoches are compatibile
@@ -291,8 +296,12 @@ impl Controller {
         let partitions = context.all_partitions();
         match self.zk_client.get_topic_partition_states(partitions) {
             Ok(leader_isr_and_epochs) => {
-                for (partition, (leader_isr, epoch)) in leader_isr_and_epochs {
-                    context.put_partition_leadership_info(partition, leader_isr, epoch);
+                for (partition, leader_isr) in leader_isr_and_epochs {
+                    context.put_partition_leadership_info(
+                        partition,
+                        leader_isr.clone(),
+                        leader_isr.controller_epoch,
+                    );
                 }
             }
             Err(_) => {
@@ -306,7 +315,7 @@ impl Controller {
         todo!();
     }
 
-    fn process_topic_ids(&self, topic_id_assignment: HashSet<TopicIdReplicaAssignment>) {
+    fn process_topic_ids(&self, topic_id_assignment: Vec<TopicIdReplicaAssignment>) {
         // Add topic IDs to controller context, Do we really need topic ids tho?
         todo!();
     }
