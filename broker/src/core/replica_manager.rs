@@ -37,7 +37,7 @@ pub struct ReplicaManager {
     log_manager: Arc<LogManager>,
     zk_client: Arc<KafkaZkClient>,
     partition_manager: Arc<PartitionManager>,
-    ack_manager: AckManager,
+    ack_manager: Arc<AckManager>,
 
     _isr_update_task: JoinHandle<()>,
     _watermark_cp_task: JoinHandle<()>,
@@ -50,15 +50,21 @@ impl ReplicaManager {
         zk_client: Arc<KafkaZkClient>,
     ) -> ReplicaManager {
         let partition_manager = Arc::new(PartitionManager::init(log_manager.clone()));
+        let ack_manager = Arc::new(AckManager::init(log_manager.clone()));
 
         ReplicaManager {
             broker_id,
             log_manager: log_manager.clone(),
             zk_client: zk_client.clone(),
             partition_manager: partition_manager.clone(),
-            ack_manager: AckManager::init(log_manager.clone()),
+            ack_manager: ack_manager.clone(),
 
-            _isr_update_task: isr_update_task(partition_manager.clone(), zk_client.clone()),
+            _isr_update_task: isr_update_task(
+                broker_id,
+                partition_manager.clone(),
+                ack_manager.clone(),
+                zk_client.clone(),
+            ),
             _watermark_cp_task: watermark_cp_task(partition_manager.clone()),
         }
     }
@@ -222,7 +228,11 @@ impl ReplicaManager {
                     let notify = ack_handler.append_messages(messages, required_acks);
 
                     // Send notification
-                    // TODO: set_data for offset
+                    let _ = self.zk_client.set_topic_partition_offset(
+                        &topic_partition.topic,
+                        topic_partition.partition,
+                        None,
+                    )?;
 
                     // Wait for notification of ack
                     notify.notified().await;

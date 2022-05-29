@@ -39,12 +39,12 @@ impl PartitionManager {
         }
     }
 
-    pub fn get_all_leaders(&self) -> Vec<Arc<PartitionState>> {
+    pub fn get_all_leaders(&self) -> Vec<(TopicPartition, Arc<PartitionState>)> {
         let r = self.partitions.read().unwrap();
         let mut partition_states = Vec::new();
-        for partition_state in (*r).values() {
+        for (topic_partition, partition_state) in &(*r) {
             if partition_state.leader.is_none() {
-                partition_states.push(partition_state.clone());
+                partition_states.push((topic_partition.clone(), partition_state.clone()));
             }
         }
         partition_states

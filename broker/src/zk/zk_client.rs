@@ -16,9 +16,7 @@ use super::{
 };
 use crate::common::{
     broker::BrokerInfo,
-    topic_partition::{
-        LeaderAndIsr, PartitionOffset, ReplicaAssignment, TopicIdReplicaAssignment, TopicPartition,
-    },
+    topic_partition::{LeaderAndIsr, ReplicaAssignment, TopicIdReplicaAssignment, TopicPartition},
 };
 
 use crate::controller::constants::{INITIAL_CONTROLLER_EPOCH, INITIAL_CONTROLLER_EPOCH_ZK_VERSION};
@@ -487,12 +485,12 @@ impl KafkaZkClient {
         &self,
         topic: &str,
         partition: u32,
-    ) -> ZkResult<Option<PartitionOffset>> {
+    ) -> ZkResult<Option<Vec<u8>>> {
         match self.client.get_data(
             TopicPartitionOffsetZNode::path(topic, partition).as_str(),
             false,
         ) {
-            Ok(resp) => Ok(Some(TopicPartitionOffsetZNode::decode(&resp.0))),
+            Ok(resp) => Ok(Some((&resp.0).clone())),
             Err(e) => match e {
                 ZkError::NoNode => Ok(None),
                 _ => Err(e),
@@ -504,12 +502,11 @@ impl KafkaZkClient {
         &self,
         topic: &str,
         partition: u32,
-        partition_offset: PartitionOffset,
         version: Option<i32>,
     ) -> ZkResult<bool> {
         match self.client.set_data(
             TopicPartitionOffsetZNode::path(topic, partition).as_str(),
-            TopicPartitionOffsetZNode::encode(partition_offset),
+            TopicPartitionOffsetZNode::encode(),
             version,
         ) {
             Ok(_) => Ok(true),
