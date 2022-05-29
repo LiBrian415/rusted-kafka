@@ -1,11 +1,12 @@
 use std::{
     collections::{HashMap, VecDeque},
     sync::{Arc, RwLock},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use crate::common::topic_partition::TopicPartition;
 
-const DEFAULT_SEGMENT_SIZE: usize = 1024 * 1024;
+use super::config::DEFAULT_SEGMENT_SIZE;
 
 /// Simple Log which can be visualized as a linkedlist of
 /// segments, each containing 1 or more messages. The
@@ -48,7 +49,7 @@ impl Log {
         fetch_max_bytes: u64,
         issued_by_client: bool,
     ) -> Vec<u8> {
-        // Check if the log has available entries
+        // Check if an upper bound is needed
         let upper_bound;
         if issued_by_client {
             let r = self.high_watermark.read().unwrap();
@@ -62,7 +63,7 @@ impl Log {
         let r = self.segments.read().unwrap();
 
         // Find the starting segment
-        while (i + 1) < (*r).len() && (*r)[i + 1].get_byte_offset() < start {
+        while (i + 1) < (*r).len() && (*r)[i + 1].get_byte_offset() <= start {
             i += 1;
         }
 
@@ -89,13 +90,22 @@ impl Log {
 
     /// Appends the sequence of messages into the log and returns the
     /// log end offset
-    pub fn append_messages(&self, mut messages: Vec<u8>) -> u64 {
+    pub fn append_messages(&self, messages: Vec<u8>) -> u64 {
+        let curr_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+
+        self._append_messages(messages, curr_time)
+    }
+
+    pub fn _append_messages(&self, mut messages: Vec<u8>, curr_time: u128) -> u64 {
         let mut w = self.segments.write().unwrap();
         let mut prev_end: u64 = 0;
 
         while messages.len() > 0 {
             if let Some(segment) = (*w).back() {
-                messages = segment.append_messages(messages);
+                messages = segment.append_messages(messages, curr_time);
                 prev_end = segment.byte_offset + segment.get_len() as u64;
             }
 
@@ -114,6 +124,11 @@ impl Log {
         }
     }
 
+    pub fn get_high_watermark(&self) -> u64 {
+        let r = self.high_watermark.read().unwrap();
+        *r
+    }
+
     pub fn get_log_end(&self) -> u64 {
         let r = self.segments.read().unwrap();
         if let Some(segment) = (*r).back() {
@@ -122,12 +137,55 @@ impl Log {
             0
         }
     }
+
+    /// Reset the log end offset to the last high watermark
+    pub fn truncate(&self) {
+        let mut i = 0;
+
+        // Stop any further changes to the segment and watermark
+        let mut ws = self.segments.write().unwrap();
+        let rw = self.high_watermark.read().unwrap();
+
+        // Find the starting segment
+        while (i + 1) < (*ws).len() && (*ws)[i + 1].get_byte_offset() <= *rw {
+            i += 1;
+        }
+
+        if i < (*ws).len() {
+            (*ws)[i].truncate(*rw);
+            while (*ws).len() > i + 1 {
+                (*ws).pop_back();
+            }
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        let r = self.segments.read().unwrap();
+        (*r).len() == 0
+    }
+
+    pub fn get_create_time(&self, message_offset: u64) -> u128 {
+        let r = self.segments.read().unwrap();
+
+        if (*r).len() == 0 {
+            return u128::max_value();
+        }
+
+        let mut i = 0;
+        // Find the starting segment
+        while (i + 1) < (*r).len() && (*r)[i + 1].get_byte_offset() <= message_offset {
+            i += 1;
+        }
+
+        (*r)[i].get_create_time(message_offset)
+    }
 }
 
 pub struct LogSegment {
     data: RwLock<Vec<u8>>,
     byte_offset: u64,
     segment_size: usize,
+    create_time: RwLock<HashMap<u64, u128>>,
 }
 
 impl LogSegment {
@@ -136,6 +194,7 @@ impl LogSegment {
             data: RwLock::new(Vec::new()),
             byte_offset,
             segment_size,
+            create_time: RwLock::new(HashMap::new()),
         }
     }
 
@@ -171,6 +230,7 @@ impl LogSegment {
         // Also, ensure that we don't fetch more than we can
         while i < (*r).len() {
             if (offset + i as u64) >= upper_limit {
+                reached_bound = true;
                 break;
             }
             let len = u32::from_be_bytes((*r)[i..(i + 4)].try_into().unwrap());
@@ -189,18 +249,20 @@ impl LogSegment {
     /// overflowing.
     ///
     /// Returns the remaining messages that weren't able to fit.
-    pub fn append_messages(&self, messages: Vec<u8>) -> Vec<u8> {
+    pub fn append_messages(&self, messages: Vec<u8>, time: u128) -> Vec<u8> {
         let mut i: usize = 0;
-        let mut w = self.data.write().unwrap();
+        let mut wd = self.data.write().unwrap();
+        let mut wt = self.create_time.write().unwrap();
 
         // Append messages into the log segment, stopping when the segment can't
         // hold the next message
         while i < messages.len() {
             let len = u32::from_be_bytes(messages[i..(i + 4)].try_into().unwrap());
-            if (4 + len as usize + (*w).len()) > self.segment_size {
+            if (4 + len as usize + (*wd).len()) > self.segment_size {
                 break;
             }
-            (*w).extend_from_slice(&messages[i..(i + 4 + len as usize)]);
+            (*wt).insert(self.byte_offset + (*wd).len() as u64, time);
+            (*wd).extend_from_slice(&messages[i..(i + 4 + len as usize)]);
             i += 4 + len as usize;
         }
 
@@ -209,6 +271,34 @@ impl LogSegment {
             messages[i..].to_vec()
         } else {
             Vec::new()
+        }
+    }
+
+    pub fn truncate(&self, offset: u64) {
+        let mut w = self.data.write().unwrap();
+
+        let base_offset = self.byte_offset;
+        let max_offset = base_offset + (*w).len() as u64;
+
+        if offset < max_offset {
+            (*w).truncate((offset - base_offset).try_into().unwrap());
+        }
+    }
+
+    /// -inf: record doesn't exist
+    /// inf: record matches largest in segment
+    /// otherwise: found match
+    pub fn get_create_time(&self, message_offset: u64) -> u128 {
+        let rd = self.data.read().unwrap();
+        let rt = self.create_time.read().unwrap();
+        if let Some(t) = (*rt).get(&message_offset) {
+            *t
+        } else {
+            if message_offset == self.byte_offset + (*rd).len() as u64 {
+                u128::max_value()
+            } else {
+                u128::min_value()
+            }
         }
     }
 }
@@ -225,6 +315,11 @@ impl LogManager {
         }
     }
 
+    pub fn has_log(&self, topic_partition: &TopicPartition) -> bool {
+        let r = self.data.read().unwrap();
+        (*r).contains_key(topic_partition)
+    }
+
     pub fn get_log(&self, topic_partition: &TopicPartition) -> Option<Arc<Log>> {
         let r = self.data.read().unwrap();
         match (*r).get(topic_partition) {
@@ -233,10 +328,15 @@ impl LogManager {
         }
     }
 
-    pub fn add_log(&self, topic_partition: &TopicPartition) {
+    pub fn get_or_create_log(&self, topic_partition: &TopicPartition) -> Arc<Log> {
         let mut w = self.data.write().unwrap();
-        if !(*w).contains_key(topic_partition) {
-            (*w).insert(topic_partition.clone(), Arc::new(Log::init()));
+
+        if let Some(log) = (*w).get(topic_partition) {
+            log.clone()
+        } else {
+            let log = Arc::new(Log::init());
+            (*w).insert(topic_partition.clone(), log.clone());
+            log
         }
     }
 }
@@ -291,11 +391,11 @@ mod log_segment_tests {
     fn append() {
         let segment = LogSegment::init(0, DEFAULT_SEGMENT_SIZE);
         let message_set = construct_message_set(vec!["msg1", "msg2"]);
-        let remaining = segment.append_messages(message_set);
+        let remaining = segment.append_messages(message_set, 0);
         assert_valid_append(&remaining, &segment, 0, 16);
 
         let message_set_1 = construct_message_set(vec!["msg3", "msg4"]);
-        let remaining = segment.append_messages(message_set_1);
+        let remaining = segment.append_messages(message_set_1, 0);
         assert_valid_append(&remaining, &segment, 0, 32);
     }
 
@@ -303,7 +403,7 @@ mod log_segment_tests {
     fn append_full() {
         let segment = LogSegment::init(0, 0);
         let message_set = construct_message_set(vec!["msg1", "msg2"]);
-        let remaining = segment.append_messages(message_set);
+        let remaining = segment.append_messages(message_set, 0);
         assert_valid_append(&remaining, &segment, 16, 0);
     }
 
@@ -311,7 +411,7 @@ mod log_segment_tests {
     fn append_partial() {
         let segment = LogSegment::init(0, 10);
         let message_set = construct_message_set(vec!["msg1", "msg2"]);
-        let remaining = segment.append_messages(message_set);
+        let remaining = segment.append_messages(message_set, 0);
         assert_valid_append(&remaining, &segment, 8, 8);
     }
 
@@ -319,7 +419,7 @@ mod log_segment_tests {
     fn fetch() {
         let segment = LogSegment::init(0, DEFAULT_SEGMENT_SIZE);
         let message_set = construct_message_set(vec!["msg1", "msg2"]);
-        let _ = segment.append_messages(message_set);
+        let _ = segment.append_messages(message_set, 0);
 
         let (bytes, reached_max) = segment.fetch_messages(0, u64::max_value(), u64::max_value());
 
@@ -339,7 +439,7 @@ mod log_segment_tests {
     fn fetch_start() {
         let segment = LogSegment::init(0, DEFAULT_SEGMENT_SIZE);
         let message_set = construct_message_set(vec!["msg1", "msg2"]);
-        let _ = segment.append_messages(message_set);
+        let _ = segment.append_messages(message_set, 0);
 
         let (bytes, reached_max) = segment.fetch_messages(8, u64::max_value(), u64::max_value());
 
@@ -352,7 +452,7 @@ mod log_segment_tests {
     fn fetch_max() {
         let segment = LogSegment::init(0, DEFAULT_SEGMENT_SIZE);
         let message_set = construct_message_set(vec!["msg1", "msg2"]);
-        let _ = segment.append_messages(message_set);
+        let _ = segment.append_messages(message_set, 0);
 
         let (bytes, reached_max) = segment.fetch_messages(0, 8, u64::max_value());
 
@@ -365,13 +465,58 @@ mod log_segment_tests {
     fn fetch_upper() {
         let segment = LogSegment::init(0, DEFAULT_SEGMENT_SIZE);
         let message_set = construct_message_set(vec!["msg1", "msg2"]);
-        let _ = segment.append_messages(message_set);
+        let _ = segment.append_messages(message_set, 0);
 
         let (bytes, reached_max) = segment.fetch_messages(0, u64::max_value(), 8);
 
         let expected: Vec<String> = ["msg1"].iter().map(|&s| s.into()).collect();
+        assert!(reached_max);
+        assert_eq!(deserialize(bytes), expected);
+    }
+
+    #[test]
+    fn truncate() {
+        let segment = LogSegment::init(0, DEFAULT_SEGMENT_SIZE);
+        let message_set = construct_message_set(vec!["msg1", "msg2"]);
+        let _ = segment.append_messages(message_set, 0);
+
+        {
+            let r = segment.data.read().unwrap();
+            assert_eq!(r.len(), 16);
+        }
+
+        segment.truncate(8);
+        {
+            let r = segment.data.read().unwrap();
+            assert_eq!(r.len(), 8);
+        }
+        let (bytes, reached_max) = segment.fetch_messages(0, u64::max_value(), u64::max_value());
+        let expected: Vec<String> = ["msg1"].iter().map(|&s| s.into()).collect();
         assert!(!reached_max);
         assert_eq!(deserialize(bytes), expected);
+    }
+
+    #[test]
+    fn create_time() {
+        let segment = LogSegment::init(0, DEFAULT_SEGMENT_SIZE);
+        let message_set = construct_message_set(vec!["msg1", "msg2"]);
+        let _ = segment.append_messages(message_set, 10);
+    }
+
+    #[test]
+    fn create_time_end() {
+        let segment = LogSegment::init(0, DEFAULT_SEGMENT_SIZE);
+        let message_set = construct_message_set(vec!["msg1", "msg2"]);
+        let _ = segment.append_messages(message_set, 10);
+
+        assert_eq!(segment.get_create_time(0), 10);
+        assert_eq!(segment.get_create_time(8), 10);
+
+        // Doesn't exist
+        assert_eq!(segment.get_create_time(1), u128::min_value());
+
+        // Doesn't exist but last
+        assert_eq!(segment.get_create_time(16), u128::max_value());
     }
 }
 
@@ -512,5 +657,55 @@ mod log_tests {
 
         let expected: Vec<String> = ["msg1", "msg2", "msg3"].iter().map(|&s| s.into()).collect();
         assert_eq!(deserialize(bytes), expected);
+    }
+
+    #[test]
+    fn truncate() {
+        let log = Log::init_test(16);
+        let message_set = construct_message_set(vec![
+            "msg1", "msg2", "msg3", "msg4", "msg5", "msg6", "msg7", "msg8",
+        ]);
+        log.append_messages(message_set);
+
+        log.checkpoint_high_watermark(24);
+        log.truncate();
+        let bytes = log.fetch_messages(0, u64::max_value(), false);
+
+        let expected: Vec<String> = ["msg1", "msg2", "msg3"].iter().map(|&s| s.into()).collect();
+        assert_eq!(deserialize(bytes), expected);
+    }
+
+    #[test]
+    fn truncate_empty() {
+        let log = Log::init_test(16);
+        log.truncate();
+
+        let bytes = log.fetch_messages(0, u64::max_value(), false);
+        assert_eq!(bytes.len(), 0);
+    }
+
+    #[test]
+    fn get_create_time() {
+        let log = Log::init_test(16);
+        let msg_set1 = construct_message_set(vec!["msg1"]);
+        let msg_set2 = construct_message_set(vec!["msg2", "msg3"]);
+        let msg_set3 = construct_message_set(vec!["msg4"]);
+
+        log._append_messages(msg_set1, 0);
+        log._append_messages(msg_set2, 1);
+        log._append_messages(msg_set3, 2);
+
+        assert_eq!(log.get_create_time(0), 0);
+        assert_eq!(log.get_create_time(8), 1);
+        assert_eq!(log.get_create_time(16), 1);
+        assert_eq!(log.get_create_time(24), 2);
+        assert_eq!(log.get_create_time(32), u128::max_value());
+    }
+
+    #[test]
+    fn get_create_time_empty() {
+        let log = Log::init_test(16);
+
+        assert_eq!(log.get_create_time(0), u128::max_value());
     }
 }
