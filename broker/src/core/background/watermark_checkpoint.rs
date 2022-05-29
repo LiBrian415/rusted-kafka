@@ -12,7 +12,7 @@ pub fn watermark_cp_task(partition_manager: Arc<PartitionManager>) -> JoinHandle
             interval.tick().await;
 
             let partition_states = partition_manager.get_all_leaders();
-            for partition_state in partition_states {
+            for (_topic_partition, partition_state) in partition_states {
                 let min_isr_ack = partition_state.get_isr_ack();
                 let log = partition_state.get_log();
                 let checkpoint = if min_isr_ack == u64::max_value() {

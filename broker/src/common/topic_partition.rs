@@ -71,20 +71,3 @@ impl LeaderAndIsr {
         }
     }
 }
-
-#[derive(Serialize, Deserialize)]
-pub struct PartitionOffset {
-    lower_bound: u128,
-    log_end: u128,
-    high_watermark: u128,
-}
-
-impl PartitionOffset {
-    pub fn init(lower_bound: u128, log_end: u128, high_watermark: u128) -> PartitionOffset {
-        PartitionOffset {
-            lower_bound,
-            log_end,
-            high_watermark,
-        }
-    }
-}
