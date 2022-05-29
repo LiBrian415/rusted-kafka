@@ -50,10 +50,10 @@ pub struct TopicIdReplicaAssignment {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct LeaderAndIsr {
-    leader: u32,
-    isr: Vec<u32>,
-    controller_epoch: u128,
-    leader_epoch: u128,
+    pub leader: u32,
+    pub isr: Vec<u32>,
+    pub controller_epoch: u128,
+    pub leader_epoch: u128,
 }
 
 impl LeaderAndIsr {
