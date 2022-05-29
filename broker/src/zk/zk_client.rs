@@ -376,7 +376,7 @@ impl KafkaZkClient {
         }
     }
 
-    // TODO
+    // TODO: add watcher setup
     pub fn get_all_brokers(&self) -> ZkResult<Vec<Option<BrokerInfo>>> {
         let mut broker_ids: Vec<u32> = match self.get_children(BrokerIdsZNode::path().as_str()) {
             Ok(list) => list.iter().map(|id| id.parse::<u32>().unwrap()).collect(),
@@ -952,9 +952,13 @@ mod client_tests {
     use zookeeper::{Acl, ZkError, ZkResult};
 
     use crate::{
+        common::broker::BrokerInfo,
         controller::constants::INITIAL_CONTROLLER_EPOCH,
         zk::{
-            zk_data::{ControllerEpochZNode, ControllerZNode, PersistentZkPaths, TopicsZNode},
+            zk_data::{
+                BrokerIdZNode, ControllerEpochZNode, ControllerZNode, PersistentZkPaths,
+                TopicsZNode,
+            },
             zk_watcher::KafkaZkHandlers,
         },
     };
@@ -1088,21 +1092,91 @@ mod client_tests {
 
     #[test]
     fn test_register_broker() {
-        todo!();
+        let client = get_client();
+        let broker_info: BrokerInfo = BrokerInfo::init("localhost", "223", 0);
+        let _ = client.register_broker(broker_info);
+        match client
+            .client
+            .get_data(BrokerIdZNode::path(0).as_str(), false)
+        {
+            Ok(_) => {}
+            Err(e) => panic!("register failed {}", e),
+        }
     }
 
     #[test]
     fn test_get_stat_after_node_exists() {
-        todo!();
+        let client = get_client();
+        let broker_info: BrokerInfo = BrokerInfo::init("localhost", "223", 0);
+        let _ = client.register_broker(broker_info);
+        match client.get_stat_after_node_exists(BrokerIdZNode::path(0).as_str()) {
+            Ok(_) => {}
+            Err(e) => panic!("register failed {}", e),
+        }
     }
 
     #[test]
     fn test_get_broker() {
-        todo!();
+        let client = get_client();
+        let broker_info: BrokerInfo = BrokerInfo::init("localhost", "223", 0);
+        let _ = client.register_broker(broker_info.clone());
+        match client.get_broker(0) {
+            Ok(fetched) => match fetched {
+                Some(info) => {
+                    assert_eq!(info.hostname, broker_info.hostname);
+                    assert_eq!(info.port, broker_info.port);
+                    assert_eq!(info.id, broker_info.id);
+                }
+                None => panic!("broker is not registered"),
+            },
+            Err(e) => panic!("{}", e),
+        }
     }
 
     #[test]
     fn test_get_all_brokers() {
-        todo!();
+        let client = get_client();
+        let broker_info0: BrokerInfo = BrokerInfo::init("localhost", "223", 0);
+        let broker_info1: BrokerInfo = BrokerInfo::init("localhost", "224", 1);
+        let broker_infos = vec![broker_info0.clone(), broker_info1.clone()];
+        let _ = client.register_broker(broker_info0.clone());
+        let _ = client.register_broker(broker_info1.clone());
+        let mut i = 0;
+        match client.get_all_brokers() {
+            Ok(fetched) => {
+                for broker in fetched {
+                    match broker {
+                        Some(info) => {
+                            assert_eq!(info.hostname, broker_infos[i].hostname);
+                            assert_eq!(info.port, broker_infos[i].port);
+                            assert_eq!(info.id, broker_infos[i].id);
+                        }
+                        None => panic!("brokers should all be up"),
+                    };
+                    i = i + 1;
+                }
+            }
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_get_all_broker_and_epoch() {
+        let client = get_client();
+        let broker_info0: BrokerInfo = BrokerInfo::init("localhost", "223", 0);
+        let broker_info1: BrokerInfo = BrokerInfo::init("localhost", "224", 1);
+        let broker_infos = vec![broker_info0.clone(), broker_info1.clone()];
+        let _ = client.register_broker(broker_info0.clone());
+        let _ = client.register_broker(broker_info1.clone());
+
+        match client.get_all_broker_and_epoch() {
+            Ok(fetched) => {
+                for info in broker_infos {
+                    assert!(fetched.contains_key(&info));
+                    assert!(!(*fetched.get(&info).unwrap() == (2 as i64)));
+                }
+            }
+            Err(e) => panic!("{}", e),
+        }
     }
 }
