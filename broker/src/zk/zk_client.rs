@@ -72,7 +72,7 @@ impl KafkaZkClient {
     fn create_recursive(&self, path: &str, data: Vec<u8>) -> ZkResult<()> {
         let res = self.client.create(
             path,
-            data,
+            data.clone(),
             Acl::open_unsafe().clone(),
             zookeeper::CreateMode::Persistent,
         );
@@ -81,7 +81,15 @@ impl KafkaZkClient {
             Ok(_) => Ok(()),
             Err(e1) => match e1 {
                 ZkError::NoNode => match self.recursive_create(get_parent(path).as_str()) {
-                    Ok(_) => Ok(()),
+                    Ok(_) => match self.client.create(
+                        path,
+                        data,
+                        Acl::open_unsafe().clone(),
+                        zookeeper::CreateMode::Persistent,
+                    ) {
+                        Ok(_) => Ok(()),
+                        Err(e) => Err(e),
+                    },
                     Err(e2) => match e2 {
                         ZkError::NodeExists => Ok(()),
                         _ => Err(e2),
@@ -107,7 +115,15 @@ impl KafkaZkClient {
             Ok(_) => Ok(()),
             Err(e1) => match e1 {
                 ZkError::NoNode => match self.recursive_create(get_parent(path).as_str()) {
-                    Ok(_) => Ok(()),
+                    Ok(_) => match self.client.create(
+                        path,
+                        Vec::new(),
+                        Acl::open_unsafe().clone(),
+                        zookeeper::CreateMode::Persistent,
+                    ) {
+                        Ok(_) => Ok(()),
+                        Err(e) => Err(e),
+                    },
                     Err(e2) => match e2 {
                         ZkError::NodeExists => Ok(()),
                         _ => Err(e2),
@@ -133,7 +149,7 @@ impl KafkaZkClient {
 
         let (curr_epoch, curr_epoch_zk_version) = match result {
             Some(info) => (info.0, info.1.version),
-            None => match self.create_controller_epoch_znode(INITIAL_CONTROLLER_EPOCH) {
+            None => match self.create_controller_epoch_znode() {
                 Ok(r) => r,
                 Err(e) => return Err(e),
             },
@@ -191,10 +207,10 @@ impl KafkaZkClient {
         }
     }
 
-    fn create_controller_epoch_znode(&self, epoch: u128) -> ZkResult<(u128, i32)> {
+    fn create_controller_epoch_znode(&self) -> ZkResult<(u128, i32)> {
         match self.client.create(
             ControllerEpochZNode::path().as_str(),
-            ControllerEpochZNode::encode(epoch),
+            ControllerEpochZNode::encode(INITIAL_CONTROLLER_EPOCH),
             Acl::open_unsafe().clone(),
             CreateMode::Persistent,
         ) {
@@ -396,7 +412,7 @@ impl KafkaZkClient {
 
         match result {
             Ok(data) => {
-                self.delete_isr_change_notifications_with_sequence_num(
+                return self.delete_isr_change_notifications_with_sequence_num(
                     data.iter()
                         .map(|child| IsrChangeNotificationZNode::seq_num(child.to_string()))
                         .collect(),
@@ -922,5 +938,171 @@ impl KafkaZkClient {
             }
             _ => Err(ZkError::NoAuth),
         }
+    }
+}
+
+#[cfg(test)]
+mod client_tests {
+    use std::{
+        collections::HashMap,
+        sync::{Arc, RwLock},
+        time::Duration,
+    };
+
+    use zookeeper::{Acl, ZkError, ZkResult};
+
+    use crate::{
+        controller::constants::INITIAL_CONTROLLER_EPOCH,
+        zk::{
+            zk_data::{ControllerEpochZNode, ControllerZNode, PersistentZkPaths, TopicsZNode},
+            zk_watcher::KafkaZkHandlers,
+        },
+    };
+
+    use super::KafkaZkClient;
+
+    const CONN_STR: &str = "localhost:2181";
+    const SESS_TIMEOUT: Duration = Duration::from_secs(3);
+
+    fn get_client() -> KafkaZkClient {
+        let handlers = KafkaZkHandlers {
+            change_handlers: Arc::new(RwLock::new(HashMap::new())),
+            child_change_handlers: Arc::new(RwLock::new(HashMap::new())),
+        };
+        let client = KafkaZkClient::init(CONN_STR, SESS_TIMEOUT, handlers);
+        assert!(!client.is_err());
+        client.unwrap()
+    }
+
+    #[test]
+    fn test_create_top_level_paths() {
+        let client = get_client();
+
+        client.create_top_level_paths();
+        let persistent_path = PersistentZkPaths::init();
+        for path in persistent_path.paths {
+            let result = client.client.get_data(&path, false);
+
+            match result {
+                Ok(_) => {}
+                Err(e) => match e {
+                    ZkError::NodeExists => (),
+                    _ => panic!("failed with some other reasons"),
+                },
+            }
+        }
+    }
+
+    #[test]
+    fn test_register_controller_and_increment_controller_epoch() {
+        let id = 0;
+        let client = get_client();
+        let _ = client.register_controller_and_increment_controller_epoch(id);
+
+        match client
+            .client
+            .get_data(ControllerZNode::path().as_str(), false)
+        {
+            Ok(data) => {
+                assert_eq!(ControllerZNode::decode(&data.0), id);
+            }
+            Err(e) => panic!("{}", e),
+        }
+
+        match client
+            .client
+            .get_data(ControllerEpochZNode::path().as_str(), false)
+        {
+            Ok(data) => {
+                assert_eq!(ControllerEpochZNode::decode(&data.0), 1);
+            }
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_create_controller_epoch_znode() {
+        let client = get_client();
+        let _ = client.create_controller_epoch_znode();
+
+        match client
+            .client
+            .get_data(ControllerEpochZNode::path().as_str(), false)
+        {
+            Ok(data) => {
+                assert_eq!(
+                    ControllerEpochZNode::decode(&data.0),
+                    INITIAL_CONTROLLER_EPOCH
+                );
+            }
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_get_controller_epoch() {
+        let client = get_client();
+        let result = client.get_controller_epoch();
+
+        match result {
+            Ok(resp) => match resp {
+                Some(epoch) => assert_eq!(epoch.0, 0),
+                None => panic!("controller_epoch is not there"),
+            },
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_get_controller_id() {
+        let client = get_client();
+        let _ = client.register_controller_and_increment_controller_epoch(0);
+        let result = client.get_controller_id();
+        match result {
+            Ok(resp) => match resp {
+                Some(id) => assert_eq!(id, 0),
+                None => panic!("controller has not registerd"),
+            },
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_check_controller() {
+        let client = get_client();
+        let _ = client.register_controller_and_increment_controller_epoch(0);
+        match client.check_controller(0) {
+            Ok(resp) => assert_eq!(true, resp),
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_check_epoch() {
+        let client = get_client();
+        match client.check_epoch(1) {
+            Ok(resp) => assert_eq!(false, resp),
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_register_broker() {
+        todo!();
+    }
+
+    #[test]
+    fn test_get_stat_after_node_exists() {
+        todo!();
+    }
+
+    #[test]
+    fn test_get_broker() {
+        todo!();
+    }
+
+    #[test]
+    fn test_get_all_brokers() {
+        todo!();
     }
 }
