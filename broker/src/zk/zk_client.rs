@@ -33,6 +33,7 @@ pub struct KafkaZkClient {
 
 const GET_REQUEST: u32 = 0;
 const GET_CHILDREN_REQUEST: u32 = 1;
+const EXIST_REQUEST: u32 = 2;
 
 impl KafkaZkClient {
     pub fn init(
@@ -929,7 +930,7 @@ impl KafkaZkClient {
                     None => Ok(false),
                 }
             }
-            GET_REQUEST => {
+            GET_REQUEST | EXIST_REQUEST => {
                 let handlers = self.handlers.change_handlers.read().unwrap();
                 match handlers.get(&path) {
                     Some(_) => Ok(true),
@@ -949,14 +950,18 @@ mod client_tests {
         time::Duration,
     };
 
-    use zookeeper::{Acl, ZkError, ZkResult};
+    use zookeeper::{recipes::leader, Acl, CreateMode, ZkError, ZkResult};
 
     use crate::{
-        common::broker::BrokerInfo,
+        common::{
+            broker::BrokerInfo,
+            topic_partition::{LeaderAndIsr, ReplicaAssignment, TopicPartition},
+        },
         controller::constants::INITIAL_CONTROLLER_EPOCH,
         zk::{
             zk_data::{
                 BrokerIdZNode, ControllerEpochZNode, ControllerZNode, PersistentZkPaths,
+                TopicPartitionStateZNode, TopicPartitionZNode, TopicPartitionsZNode, TopicZNode,
                 TopicsZNode,
             },
             zk_watcher::KafkaZkHandlers,
@@ -1178,5 +1183,160 @@ mod client_tests {
             }
             Err(e) => panic!("{}", e),
         }
+    }
+
+    #[test]
+    fn test_delete_isr_change_notifications() {
+        todo!();
+    }
+
+    #[test]
+    fn test_delete_isr_change_notifications_with_sequence_num() {
+        todo!();
+    }
+
+    #[test]
+    fn test_get_all_topics() {
+        let client = get_client();
+        let _ = client.client.create(
+            TopicsZNode::path().as_str(),
+            Vec::new(),
+            Acl::open_unsafe().clone(),
+            CreateMode::Persistent,
+        );
+        let _ = client.client.create(
+            format!("{}/test", TopicsZNode::path()).as_str(),
+            Vec::new(),
+            Acl::open_unsafe().clone(),
+            CreateMode::Persistent,
+        );
+
+        match client.get_all_topics(false) {
+            Ok(resp) => assert!(resp.contains("test")),
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_create_topic_partitions() {
+        let client = get_client();
+        let _ = client.create_topic_partitions(vec!["test".to_string()]);
+
+        match client
+            .client
+            .exists(TopicPartitionsZNode::path("test").as_str(), false)
+        {
+            Ok(resp) => match resp {
+                Some(_) => {}
+                None => panic!("topic partition is not created"),
+            },
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_create_topic_partition() {
+        let client = get_client();
+        let _ = client.create_topic_partition(vec![TopicPartition {
+            topic: "test".to_string(),
+            partition: 0,
+        }]);
+
+        match client
+            .client
+            .exists(TopicPartitionZNode::path("test", 0).as_str(), false)
+        {
+            Ok(resp) => match resp {
+                Some(_) => {}
+                None => panic!("topic partition is not created"),
+            },
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_create_topic_partition_state() {
+        let client = get_client();
+        let partition = TopicPartition {
+            topic: "test".to_string(),
+            partition: 0,
+        };
+
+        let leader_and_isr = LeaderAndIsr::init(0, vec![0, 1, 2], 1, 1);
+
+        let mut leader_isr_and_epoch = HashMap::new();
+        leader_isr_and_epoch.insert(partition, leader_and_isr);
+        let _ = client.create_topic_partition_state(leader_isr_and_epoch);
+
+        match client
+            .client
+            .get_data(TopicPartitionStateZNode::path("test", 0).as_str(), false)
+        {
+            Ok(resp) => {
+                let state = TopicPartitionStateZNode::decode(&resp.0);
+                assert_eq!(state.leader, 0);
+                assert_eq!(state.isr, vec![0, 1, 2]);
+                assert_eq!(state.controller_epoch, 1);
+                assert_eq!(state.leader_epoch, 1);
+            }
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_get_partitions_for_topics() {
+        // we need a set function to examine this
+        todo!();
+    }
+
+    #[test]
+    fn test_get_partition_assignment_for_topics() {
+        // we need a set function to examine this
+        todo!();
+    }
+
+    #[test]
+    fn test_get_full_replica_assignment_for_topics() {
+        // we need a set function to examine this
+        todo!();
+    }
+
+    #[test]
+    fn test_set_replica_assignment_for_topics() {
+        let client = get_client();
+        let topics = vec!["test".to_string()];
+        let assignment = ReplicaAssignment::init(HashMap::new(), HashMap::new(), HashMap::new());
+        let replica_assignments = vec![assignment];
+        let version = None;
+
+        let _ = client.set_replica_assignment_for_topics(topics, replica_assignments, version);
+
+        match client
+            .client
+            .get_data(TopicZNode::path("test").as_str(), false)
+        {
+            Ok(resp) => {
+                let data = TopicZNode::decode(&resp.0);
+                assert!(data.partitions.is_empty());
+                assert!(data.adding_replicas.is_empty());
+                assert!(data.removing_replicas.is_empty());
+            }
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_get_leader_and_isr() {
+        todo!();
+    }
+
+    #[test]
+    fn test_set_leader_and_isr() {
+        todo!();
+    }
+
+    #[test]
+    fn test_get_children() {
+        todo!();
     }
 }
