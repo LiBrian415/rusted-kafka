@@ -50,10 +50,10 @@ pub struct TopicIdReplicaAssignment {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct LeaderAndIsr {
-    leader: u32,
-    isr: Vec<u32>,
-    controller_epoch: u128,
-    leader_epoch: u128,
+    pub leader: u32,
+    pub isr: Vec<u32>,
+    pub controller_epoch: u128,
+    pub leader_epoch: u128,
 }
 
 impl LeaderAndIsr {
@@ -68,23 +68,6 @@ impl LeaderAndIsr {
             isr,
             controller_epoch,
             leader_epoch,
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct PartitionOffset {
-    lower_bound: u128,
-    log_end: u128,
-    high_watermark: u128,
-}
-
-impl PartitionOffset {
-    pub fn init(lower_bound: u128, log_end: u128, high_watermark: u128) -> PartitionOffset {
-        PartitionOffset {
-            lower_bound,
-            log_end,
-            high_watermark,
         }
     }
 }
