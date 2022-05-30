@@ -4,9 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::common::{
     broker::BrokerInfo,
-    topic_partition::{
-        LeaderAndIsr, PartitionOffset, ReplicaAssignment, TopicIdReplicaAssignment, TopicPartition,
-    },
+    topic_partition::{LeaderAndIsr, ReplicaAssignment, TopicIdReplicaAssignment, TopicPartition},
 };
 
 #[derive(Serialize, Deserialize)]
