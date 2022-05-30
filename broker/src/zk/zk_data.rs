@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::common::{
     broker::BrokerInfo,
-    topic_partition::{LeaderAndIsr, PartitionOffset, ReplicaAssignment},
+    topic_partition::{LeaderAndIsr, ReplicaAssignment},
 };
 
 #[derive(Serialize, Deserialize)]
@@ -147,12 +147,8 @@ impl TopicPartitionOffsetZNode {
         format!("{}/offset", TopicPartitionZNode::path(topic, partition))
     }
 
-    pub fn encode(partition_offset: PartitionOffset) -> Vec<u8> {
-        serde_json::to_vec(&partition_offset).unwrap()
-    }
-
-    pub fn decode(data: &Vec<u8>) -> PartitionOffset {
-        serde_json::from_slice::<PartitionOffset>(data).unwrap()
+    pub fn encode() -> Vec<u8> {
+        vec![1]
     }
 }
 
