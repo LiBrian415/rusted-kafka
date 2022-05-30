@@ -1,12 +1,17 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::zk::{
-    zk_data::{BrokerIdZNode, BrokerIdsZNode, ControllerZNode, TopicsZNode},
+    zk_data::{
+        BrokerIdZNode, BrokerIdsZNode, ControllerZNode, IsrChangeNotificationZNode, TopicsZNode,
+    },
     zk_watcher::{ZkChangeHandler, ZkChildChangeHandler},
 };
 
 use super::{
-    controller_events::{BrokerChange, BrokerModification, ControllerChange, ReElect, TopicChange},
+    controller_events::{
+        BrokerChange, BrokerModification, ControllerChange, IsrChangeNotification, ReElect,
+        TopicChange,
+    },
     event_manager::ControllerEventManager,
 };
 
@@ -124,5 +129,19 @@ impl ZkChildChangeHandler for TopicChangeHandler {
 
     fn handle_child_change(&self) {
         self.event_manager.put(Box::new(TopicChange {}));
+    }
+}
+
+pub struct IsrChangeNotificationHandler {
+    pub event_manager: ControllerEventManager,
+}
+
+impl ZkChildChangeHandler for IsrChangeNotificationHandler {
+    fn path(&self) -> String {
+        IsrChangeNotificationZNode::path("".to_string())
+    }
+
+    fn handle_child_change(&self) {
+        self.event_manager.put(Box::new(IsrChangeNotification {}));
     }
 }

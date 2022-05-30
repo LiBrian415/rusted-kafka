@@ -21,11 +21,11 @@ impl ControllerChannelManager {
         todo!();
     }
 
-    pub fn startup() {
+    pub fn startup(&self) {
         todo!();
     }
 
-    pub fn shutdown() {
+    pub fn shutdown(&self) {
         todo!();
     }
 

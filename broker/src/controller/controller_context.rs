@@ -9,15 +9,15 @@ pub struct ControllerContext {
     // offline_partition_cnt: u32,
     pub shuttingdown_broker_ids: HashSet<u32>,
     pub live_brokers: HashSet<BrokerInfo>,
-    live_broker_epochs: HashMap<u32, i64>,
+    live_broker_epochs: HashMap<u32, i64>, // topic id -> epoch
     pub epoch: u128,
     pub epoch_zk_version: i32,
     pub all_topics: HashSet<String>,
     pub partitions_being_reassigned: HashSet<TopicPartition>,
-    topic_ids: HashMap<String, u32>,
-    topic_names: HashMap<u32, String>,
-    partition_assignments: HashMap<String, HashMap<u32, ReplicaAssignment>>,
-    partition_leadership_info: HashMap<TopicPartition, (LeaderAndIsr, u128)>,
+    topic_ids: HashMap<String, u32>,   // topic name -> topic id
+    topic_names: HashMap<u32, String>, // topic id -> topic name
+    partition_assignments: HashMap<String, HashMap<u32, ReplicaAssignment>>, // topic name -> partition # -> assignment
+    partition_leadership_info: HashMap<TopicPartition, (LeaderAndIsr, u128)>, // topicPartition -> (leaderAndIsr, epoch)
     // replica_states: HashMap<>,
     topics_to_be_deleted: HashSet<String>,
 }
@@ -177,7 +177,15 @@ impl ControllerContext {
         self.clear_live_brokers();
     }
 
-    fn clear_topic_state(&self) {
+    pub fn clear_topic_state(&self) {
+        todo!();
+    }
+
+    pub fn remove_topic(&self, topic: String) {
+        todo!();
+    }
+
+    pub fn remove_live_brokers(&self, broker_ids: Vec<u32>) {
         todo!();
     }
 }

@@ -19,9 +19,9 @@ use super::{
         EVENT_REPLICA_LEADER_ELECTION, EVENT_RE_ELECT, EVENT_STARTUP, EVENT_TOPIC_CHNAGE,
         EVENT_UPDATE_METADATA_RESPONSE_RECEIVED,
     },
+    controller_events::ReplicaLeaderElection,
     event_manager::ControllerEventManager,
 };
-use crate::controller::controller_events::{BrokerModification, ControllerEvent};
 use crate::{
     common::topic_partition::TopicIdReplicaAssignment,
     controller::controller_context::ControllerContext,
@@ -29,6 +29,10 @@ use crate::{
 use crate::{
     common::{broker::BrokerInfo, topic_partition::TopicPartition},
     zk::zk_client::KafkaZkClient,
+};
+use crate::{
+    controller::controller_events::{BrokerModification, ControllerEvent},
+    zk::zk_data::IsrChangeNotificationZNode,
 };
 
 use crate::controller::channel_manager::ControllerChannelManager;
@@ -78,27 +82,32 @@ impl Controller {
                     .broker_id,
             ),
             EVENT_TOPIC_CHNAGE => self.process_topic_change(),
-            EVENT_REPLICA_LEADER_ELECTION => todo!(),
+            EVENT_REPLICA_LEADER_ELECTION => {
+                let partitions = event
+                    .as_any()
+                    .downcast_ref::<ReplicaLeaderElection>()
+                    .unwrap()
+                    .partitions
+                    .clone();
+                self.process_replica_leader_election(partitions);
+            }
+            EVENT_REGISTER_BROKER_AND_REELECT => self.process_register_broker_and_reelect(),
+            EVENT_ISR_CHANGE_NOTIFICATION => self.process_isr_change_notification(),
             EVENT_CONTROLLER_SHUTDOWN => todo!(),
             EVENT_LEADER_AND_ISR_RESPONSE_RECEIVED => todo!(),
             EVENT_UPDATE_METADATA_RESPONSE_RECEIVED => todo!(),
-            EVENT_REGISTER_BROKER_AND_REELECT => todo!(),
-            EVENT_ISR_CHANGE_NOTIFICATION => todo!(),
             _ => {}
         }
     }
 
     /***** Process Functions Entry Points for Events Start *****/
     fn process_startup(&self) {
-        self.zk_client
-            .register_znode_change_handler(Arc::new(ControllerChangeHandler {
+        let _ = self
+            .zk_client
+            .register_znode_change_handler_and_check_existence(Arc::new(ControllerChangeHandler {
                 event_manager: self.em.clone(),
             }));
         self.elect();
-    }
-
-    fn process_broker_change(&self) {
-        todo!();
     }
 
     fn process_broker_modification(&self, broker_id: u32) {
@@ -114,6 +123,7 @@ impl Controller {
             }
         };
         let old_meta = context.live_or_shutting_down_broker(broker_id);
+
         if !new_meta.is_none() && !old_meta.is_none() {
             let old = old_meta.unwrap();
             let new = new_meta.unwrap();
@@ -125,10 +135,6 @@ impl Controller {
         }
     }
 
-    fn process_topic_change(&self) {
-        todo!();
-    }
-
     fn process_controller_change(&self) {
         self.maybe_resign();
     }
@@ -138,6 +144,164 @@ impl Controller {
         self.elect();
     }
 
+    fn process_broker_change(&self) {
+        if !self.is_active() {
+            return;
+        }
+
+        let mut curr_broker_and_epochs = match self.zk_client.get_all_broker_and_epoch() {
+            Ok(resp) => resp,
+            Err(_) => {
+                return;
+            }
+        };
+
+        let mut curr_broker_id_and_epoch = HashMap::new();
+        for (broker, epoch) in curr_broker_and_epochs.iter() {
+            curr_broker_id_and_epoch.insert(broker.id, epoch);
+        }
+
+        let curr_broker_ids: HashSet<u32> = curr_broker_id_and_epoch.keys().cloned().collect();
+        let live_or_shutting_down_broker_ids =
+            self.context.borrow().live_or_shutting_down_broker_ids();
+
+        let new_broker_ids: Vec<u32> = curr_broker_ids
+            .difference(&live_or_shutting_down_broker_ids)
+            .cloned()
+            .collect();
+        let dead_broker_ids: Vec<u32> = live_or_shutting_down_broker_ids
+            .difference(&curr_broker_ids)
+            .cloned()
+            .collect();
+
+        curr_broker_and_epochs.retain(|broker, _| new_broker_ids.contains(&broker.id));
+        let new_broker_and_epoch = curr_broker_and_epochs;
+
+        for (broker, _) in new_broker_and_epoch.iter() {
+            self.channel_manager.borrow_mut().add_broker(broker.clone());
+        }
+
+        for id in dead_broker_ids.iter() {
+            self.channel_manager.borrow_mut().remove_broker(id.clone());
+        }
+
+        if !new_broker_ids.is_empty() {
+            self.context
+                .borrow_mut()
+                .add_live_brokers(new_broker_and_epoch);
+            self.on_broker_startup(new_broker_ids);
+        }
+
+        if !dead_broker_ids.is_empty() {
+            self.context
+                .borrow_mut()
+                .remove_live_brokers(dead_broker_ids.clone());
+            self.on_broker_failure(dead_broker_ids);
+        }
+    }
+
+    fn process_topic_change(&self) {
+        if !self.is_active() {
+            return;
+        }
+
+        let mut context = self.context.borrow_mut();
+
+        let topics = match self.zk_client.get_all_topics(true) {
+            Ok(topics) => topics,
+            Err(_) => {
+                return;
+            }
+        };
+        let new_topics = topics.difference(&context.all_topics).cloned().collect();
+        let deleted_topics: HashSet<String> =
+            context.all_topics.difference(&topics).cloned().collect();
+
+        context.set_all_topics(topics);
+
+        let added_partition_replica_assignment = match self
+            .zk_client
+            .get_replica_assignment_and_topic_ids_for_topics(new_topics)
+        {
+            Ok(resp) => resp,
+            Err(_) => {
+                return;
+            }
+        };
+
+        for topic in deleted_topics {
+            context.remove_topic(topic);
+        }
+
+        let _: Vec<()> = added_partition_replica_assignment
+            .iter()
+            .map(|id_assignment| {
+                let assignment = id_assignment.assignment.clone();
+                for (partition, new_assignment) in assignment {
+                    context.update_partition_full_replica_assignment(partition, new_assignment);
+                }
+            })
+            .collect();
+
+        let mut partitions = HashSet::new();
+        if !added_partition_replica_assignment.is_empty() {
+            let _: Vec<()> = added_partition_replica_assignment
+                .iter()
+                .map(|id_assignment| {
+                    let assignment = id_assignment.assignment.clone();
+                    partitions.extend(assignment.keys().cloned());
+                })
+                .collect();
+            self.on_new_partition_creation(partitions);
+        }
+    }
+
+    fn process_register_broker_and_reelect(&self) {
+        match self.zk_client.register_broker(self.broker_info.clone()) {
+            Ok(_) => self.process_re_elect(),
+            Err(_) => {
+                return;
+            }
+        }
+    }
+
+    fn process_isr_change_notification(&self) {
+        if !self.is_active() {
+            return;
+        }
+
+        let seq_num = match self.zk_client.get_all_isr_change_notifications() {
+            Ok(resp) => resp,
+            Err(_) => {
+                return;
+            }
+        };
+
+        match self
+            .zk_client
+            .get_partitions_from_isr_change_notifications(seq_num.clone())
+        {
+            Ok(partitions) => {
+                if !partitions.is_empty() {
+                    self.update_leader_and_isr_cache(partitions.clone());
+                    self.process_update_notifications(partitions);
+                }
+            }
+            Err(_) => {
+                return;
+            }
+        }
+        let _ = self
+            .zk_client
+            .delete_isr_change_notifications_with_sequence_num(
+                seq_num,
+                self.context.borrow().epoch_zk_version,
+            );
+    }
+
+    fn process_replica_leader_election(&self, partition: HashSet<TopicPartition>) {
+        todo!();
+    }
     /***** Process Functions Entry Points for Events End *****/
     fn is_active(&self) -> bool {
         *self.active_controller_id.read().unwrap() == self.broker_id
@@ -147,8 +311,9 @@ impl Controller {
         if let Ok(Some(id)) = self.zk_client.get_controller_id() {
             let mut active_id = self.active_controller_id.write().unwrap();
             *active_id = id;
+            std::mem::drop(active_id);
             if id != 0 {
-                // init value, maybe TODO
+                // The controller has been elected
                 return;
             }
         }
@@ -171,13 +336,14 @@ impl Controller {
             }
             Err(_) => {
                 // TODO: handle ControllerMovedException and others
+                self.maybe_resign()
             }
         };
     }
 
     // invoked when this broker is elected as the new controller
     fn controller_failover(&self) {
-        // register wathcers to get broker/topic callbacks
+        // register watchers to get broker/topic callbacks
         let _: Vec<()> = self
             .zk_client
             .handlers
@@ -199,22 +365,25 @@ impl Controller {
             .unwrap()
             .iter()
             .map(|(_, handler)| {
-                self.zk_client
-                    .register_znode_change_handler(handler.clone())
+                let _ = self
+                    .zk_client
+                    .register_znode_change_handler_and_check_existence(handler.clone());
             })
             .collect();
 
         // initialize the controller's context that holds cache objects for current topics, live brokers
         // leaders for all existing partitions
         let context = self.context.borrow();
-        self.zk_client
+        let _ = self
+            .zk_client
             .delete_isr_change_notifications(context.epoch_zk_version);
+        std::mem::drop(context);
         self.initialize_control_context();
-        // TODO: delete topics here l260
 
         // Send UpdateMetadata after the context is initialized and before the state machines startup.
         // reason: brokers need to receive the list of live brokers from UpdateMetadata before they can
         // process LeaderAndIsrRequests that are generated by replicaStateMachine.startup()
+        let context = self.context.borrow();
         self.send_update_metadata_request(
             context
                 .live_or_shutting_down_broker_ids()
@@ -223,11 +392,8 @@ impl Controller {
             HashSet::new(),
         );
 
-        // TODO: starts the replica state machine
-        // self.replica_state_machine.startup();
-
-        // TODO: starts the partition state machine
-
+        self.replica_state_machine.startup();
+        self.partition_state_machine.startup();
         // if any unexpected errors/ resigns as the current controller
     }
 
@@ -287,13 +453,16 @@ impl Controller {
 
         self.register_broker_modification_handler(context.live_or_shutting_down_broker_ids());
         std::mem::drop(context);
-        self.update_leader_and_isr_cache();
-        // TODO: start the channel manager
+        self.update_leader_and_isr_cache(Vec::new());
+        self.channel_manager.borrow_mut().startup();
     }
 
-    fn update_leader_and_isr_cache(&self) {
+    fn update_leader_and_isr_cache(&self, partitions_given: Vec<TopicPartition>) {
+        let mut partitions: Vec<TopicPartition> = Vec::new();
         let mut context = self.context.borrow_mut();
-        let partitions = context.all_partitions();
+        if partitions_given.is_empty() {
+            partitions = context.all_partitions();
+        }
         match self.zk_client.get_topic_partition_states(partitions) {
             Ok(leader_isr_and_epochs) => {
                 for (partition, leader_isr) in leader_isr_and_epochs {
@@ -304,9 +473,7 @@ impl Controller {
                     );
                 }
             }
-            Err(_) => {
-                // TODO
-            }
+            Err(_) => {}
         }
     }
 
@@ -315,9 +482,14 @@ impl Controller {
         todo!();
     }
 
-    fn process_topic_ids(&self, topic_id_assignment: Vec<TopicIdReplicaAssignment>) {
-        // Add topic IDs to controller context, Do we really need topic ids tho?
+    fn process_update_notifications(&self, partitions: Vec<TopicPartition>) {
+        // just send update metadata request
         todo!();
+    }
+
+    fn process_topic_ids(&self, _topic_id_assignment: Vec<TopicIdReplicaAssignment>) {
+        // Add topic IDs to controller context, Do we really need topic ids tho?
+        // do nothing since we assume no topic id
     }
 
     fn register_broker_modification_handler(&self, broker_ids: HashSet<u32>) {
@@ -328,9 +500,16 @@ impl Controller {
                     event_manager: self.em.clone(),
                     broker_id: id,
                 };
-                self.zk_client
-                    .register_znode_change_handler(Arc::new(handler));
-                // source code has brokerModificationsHandlers, but i dont think we need it
+                let _ = self
+                    .zk_client
+                    .register_znode_change_handler_and_check_existence(Arc::new(handler));
+                self.broker_modification_handlers.write().unwrap().insert(
+                    id,
+                    BrokerModificationHandler {
+                        event_manager: self.em.clone(),
+                        broker_id: id,
+                    },
+                );
             })
             .collect::<Vec<()>>();
     }
@@ -339,17 +518,18 @@ impl Controller {
         let mut broker_modification_handlers = self.broker_modification_handlers.write().unwrap();
 
         for id in brokers_id {
-            broker_modification_handlers.remove(&id);
             let handler = broker_modification_handlers.get(&id).unwrap();
             self.zk_client
                 .unregister_znode_change_handler(handler.path().as_str());
+            broker_modification_handlers.remove(&id);
         }
     }
 
     fn maybe_resign(&self) {
         let was_active_before_change = self.is_active();
 
-        self.zk_client
+        let _ = self
+            .zk_client
             .register_znode_change_handler_and_check_existence(Arc::new(ControllerChangeHandler {
                 event_manager: self.em.clone(),
             }));
@@ -383,14 +563,15 @@ impl Controller {
      */
     fn on_controller_resignation(&self) {
         // TODO: unregister watchers maybe need to add more
+        self.zk_client.unregister_znode_child_change_handler(
+            IsrChangeNotificationZNode::path("".to_string()).as_str(),
+        );
         let guard = self.broker_modification_handlers.read().unwrap();
         let broker_ids: Vec<u32> = guard.keys().cloned().collect();
         std::mem::drop(guard);
         self.unregister_broker_modification_handler(broker_ids);
 
-        // shutdown leader rebalance scheduler?
-
-        // stop other things?
+        self.partition_state_machine.shutdown();
 
         self.zk_client.unregister_znode_child_change_handler(
             TopicChangeHandler {
@@ -400,6 +581,7 @@ impl Controller {
             .as_str(),
         );
 
+        self.replica_state_machine.shutdown();
         self.zk_client.unregister_znode_child_change_handler(
             BrokerChangeHandler {
                 event_manager: self.em.clone(),
@@ -408,12 +590,25 @@ impl Controller {
             .as_str(),
         );
 
-        // shutdown channel manager
+        self.channel_manager.borrow_mut().shutdown();
 
         self.context.borrow_mut().reset_context();
     }
+
+    fn on_new_partition_creation(&self, new_partitions: HashSet<TopicPartition>) {
+        todo!();
+    }
+
+    fn on_broker_startup(&self, broker: Vec<u32>) {
+        todo!();
+    }
+
+    fn on_broker_failure(&self, broker: Vec<u32>) {
+        todo!();
+    }
 }
 
+// activation function for controller
 pub fn start_controller(
     zk_client: Arc<KafkaZkClient>,
     init_broker_info: BrokerInfo,

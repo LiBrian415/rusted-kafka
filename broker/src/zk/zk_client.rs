@@ -441,6 +441,18 @@ impl KafkaZkClient {
 
         Ok(())
     }
+
+    pub fn get_all_isr_change_notifications(&self) -> ZkResult<Vec<String>> {
+        todo!();
+    }
+
+    pub fn get_partitions_from_isr_change_notifications(
+        &self,
+        seq_num: Vec<String>,
+    ) -> ZkResult<Vec<TopicPartition>> {
+        todo!();
+    }
+
     pub fn get_all_broker_and_epoch(&self) -> ZkResult<HashMap<BrokerInfo, i64>> {
         let mut broker_ids: Vec<u32> = match self.get_children(BrokerIdsZNode::path().as_str()) {
             Ok(list) => list.iter().map(|id| id.parse::<u32>().unwrap()).collect(),
