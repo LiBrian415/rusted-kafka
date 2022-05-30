@@ -177,12 +177,8 @@ impl TopicPartitionOffsetZNode {
         format!("{}/offset", TopicPartitionZNode::path(topic, partition))
     }
 
-    pub fn encode(partition_offset: PartitionOffset) -> Vec<u8> {
-        serde_json::to_vec(&partition_offset).unwrap()
-    }
-
-    pub fn decode(data: &Vec<u8>) -> PartitionOffset {
-        serde_json::from_slice::<PartitionOffset>(data).unwrap()
+    pub fn encode() -> Vec<u8> {
+        vec![1]
     }
 }
 
