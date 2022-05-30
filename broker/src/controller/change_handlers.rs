@@ -11,7 +11,7 @@ use super::{
 };
 
 pub fn get_change_handlers(
-    em: Arc<ControllerEventManager>,
+    em: ControllerEventManager,
     bid: u32,
 ) -> HashMap<String, Arc<dyn ZkChangeHandler>> {
     let mut change_handlers: HashMap<String, Arc<dyn ZkChangeHandler>> = HashMap::new();
@@ -35,7 +35,7 @@ pub fn get_change_handlers(
 }
 
 pub fn get_child_change_handlers(
-    em: Arc<ControllerEventManager>,
+    em: ControllerEventManager,
 ) -> HashMap<String, Arc<dyn ZkChildChangeHandler>> {
     let mut child_change_handlers: HashMap<String, Arc<dyn ZkChildChangeHandler>> = HashMap::new();
 
@@ -57,7 +57,7 @@ pub fn get_child_change_handlers(
 }
 
 pub struct BrokerChangeHandler {
-    pub event_manager: Arc<ControllerEventManager>,
+    pub event_manager: ControllerEventManager,
 }
 
 impl ZkChildChangeHandler for BrokerChangeHandler {
@@ -66,12 +66,12 @@ impl ZkChildChangeHandler for BrokerChangeHandler {
     }
 
     fn handle_child_change(&self) {
-        self.event_manager.put(Arc::new(BrokerChange {}));
+        self.event_manager.put(Box::new(BrokerChange {}));
     }
 }
 
 pub struct ControllerChangeHandler {
-    pub event_manager: Arc<ControllerEventManager>,
+    pub event_manager: ControllerEventManager,
 }
 
 impl ZkChangeHandler for ControllerChangeHandler {
@@ -80,21 +80,21 @@ impl ZkChangeHandler for ControllerChangeHandler {
     }
 
     fn handle_create(&self) {
-        self.event_manager.put(Arc::new(ControllerChange {}));
+        self.event_manager.put(Box::new(ControllerChange {}));
     }
 
     fn handle_delete(&self) {
-        self.event_manager.put(Arc::new(ReElect {}));
+        self.event_manager.put(Box::new(ReElect {}));
     }
 
     fn handle_data_change(&self) {
-        self.event_manager.put(Arc::new(ControllerChange {}));
+        self.event_manager.put(Box::new(ControllerChange {}));
     }
 }
 
 pub struct BrokerModificationHandler {
     pub broker_id: u32,
-    pub event_manager: Arc<ControllerEventManager>,
+    pub event_manager: ControllerEventManager,
 }
 
 impl ZkChangeHandler for BrokerModificationHandler {
@@ -107,14 +107,14 @@ impl ZkChangeHandler for BrokerModificationHandler {
     fn handle_delete(&self) {}
 
     fn handle_data_change(&self) {
-        self.event_manager.put(Arc::new(BrokerModification {
+        self.event_manager.put(Box::new(BrokerModification {
             broker_id: self.broker_id,
         }));
     }
 }
 
 pub struct TopicChangeHandler {
-    pub event_manager: Arc<ControllerEventManager>,
+    pub event_manager: ControllerEventManager,
 }
 
 impl ZkChildChangeHandler for TopicChangeHandler {
@@ -123,6 +123,6 @@ impl ZkChildChangeHandler for TopicChangeHandler {
     }
 
     fn handle_child_change(&self) {
-        self.event_manager.put(Arc::new(TopicChange {}));
+        self.event_manager.put(Box::new(TopicChange {}));
     }
 }

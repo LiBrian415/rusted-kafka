@@ -9,7 +9,7 @@ pub struct ControllerContext {
     // offline_partition_cnt: u32,
     pub shuttingdown_broker_ids: HashSet<u32>,
     pub live_brokers: HashSet<BrokerInfo>,
-    live_broker_epochs: HashMap<u32, u128>,
+    live_broker_epochs: HashMap<u32, i64>,
     pub epoch: u128,
     pub epoch_zk_version: i32,
     pub all_topics: HashSet<String>,
@@ -23,6 +23,10 @@ pub struct ControllerContext {
 }
 
 impl ControllerContext {
+    pub fn init() -> ControllerContext {
+        todo!();
+    }
+
     pub fn live_or_shutting_down_broker_ids(&self) -> HashSet<u32> {
         HashSet::from_iter(self.live_broker_epochs.keys().map(|&id| id))
     }
@@ -81,7 +85,7 @@ impl ControllerContext {
         }
     }
 
-    pub fn set_live_brokers(&mut self, broker_and_epochs: HashMap<BrokerInfo, u128>) {
+    pub fn set_live_brokers(&mut self, broker_and_epochs: HashMap<BrokerInfo, i64>) {
         self.clear_live_brokers();
         self.add_live_brokers(broker_and_epochs);
     }
@@ -91,7 +95,7 @@ impl ControllerContext {
         self.live_broker_epochs.clear();
     }
 
-    pub fn add_live_brokers(&mut self, broker_and_epochs: HashMap<BrokerInfo, u128>) {
+    pub fn add_live_brokers(&mut self, broker_and_epochs: HashMap<BrokerInfo, i64>) {
         let _: Vec<()> = broker_and_epochs
             .into_iter()
             .map(|(broker, epoch)| {
