@@ -463,7 +463,6 @@ impl KafkaZkClient {
     pub fn set_leader_and_isr(
         &self,
         leader_and_isrs: HashMap<TopicPartition, LeaderAndIsr>,
-        controller_epoch: u128,
         expected_controller_epoch_zk_version: i32,
     ) -> ZkResult<bool> {
         for (partition, leader_and_isr) in leader_and_isrs.iter() {

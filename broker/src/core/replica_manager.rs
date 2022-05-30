@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -34,6 +34,7 @@ use super::{
 /// set.
 pub struct ReplicaManager {
     broker_id: u32,
+    controller_epoch: Arc<RwLock<Option<i32>>>,
     log_manager: Arc<LogManager>,
     zk_client: Arc<KafkaZkClient>,
     partition_manager: Arc<PartitionManager>,
@@ -46,14 +47,17 @@ pub struct ReplicaManager {
 impl ReplicaManager {
     pub fn init(
         broker_id: u32,
+        controller_epoch: Option<i32>,
         log_manager: Arc<LogManager>,
         zk_client: Arc<KafkaZkClient>,
     ) -> ReplicaManager {
         let partition_manager = Arc::new(PartitionManager::init(log_manager.clone()));
         let ack_manager = Arc::new(AckManager::init(log_manager.clone()));
+        let controller_epoch = Arc::new(RwLock::new(controller_epoch));
 
         ReplicaManager {
             broker_id,
+            controller_epoch: controller_epoch.clone(),
             log_manager: log_manager.clone(),
             zk_client: zk_client.clone(),
             partition_manager: partition_manager.clone(),
@@ -61,6 +65,7 @@ impl ReplicaManager {
 
             _isr_update_task: isr_update_task(
                 broker_id,
+                controller_epoch.clone(),
                 partition_manager.clone(),
                 ack_manager.clone(),
                 zk_client.clone(),
@@ -157,6 +162,17 @@ impl ReplicaManager {
 
         // 5)
         Ok(())
+    }
+
+    pub fn update_controller_epoch(&self, controller_epoch: i32) {
+        let mut w = self.controller_epoch.write().unwrap();
+        if let Some(epoch) = *w {
+            if epoch < controller_epoch {
+                *w = Some(controller_epoch);
+            }
+        } else {
+            *w = Some(controller_epoch);
+        }
     }
 
     /// Fetches the desired messages from the TopicPartitions. Alongside

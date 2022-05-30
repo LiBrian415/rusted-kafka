@@ -195,6 +195,12 @@ impl PartitionState {
         true
     }
 
+    pub fn get_current_version(&self) -> (u128, u128) {
+        let gc = self.controller_epoch.lock().unwrap();
+        let gl = self.leader_epoch.lock().unwrap();
+        (*gc, *gl)
+    }
+
     pub fn update_isr(&self) -> bool {
         let curr_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
