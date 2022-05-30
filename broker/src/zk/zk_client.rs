@@ -5,13 +5,17 @@ use std::{
 };
 use zookeeper::{Acl, CreateMode, Stat, ZkError, ZkResult, ZkState, ZooKeeper};
 
-use super::zk_data::PersistentZkPaths;
+use super::zk_data::{
+    IsrChangeNotificationSequenceZNode, IsrChangeNotificationZNode, PersistentZkPaths,
+    TopicPartitionZNode,
+};
 use super::{
     zk_data::{
         BrokerIdZNode, BrokerIdsZNode, ControllerEpochZNode, ControllerZNode,
         TopicPartitionOffsetZNode, TopicPartitionStateZNode, TopicPartitionsZNode, TopicZNode,
         TopicsZNode,
     },
+    zk_helper::get_parent,
     zk_watcher::{KafkaZkHandlers, KafkaZkWatcher, ZkChangeHandler, ZkChildChangeHandler},
 };
 use crate::common::{
@@ -25,24 +29,23 @@ pub struct KafkaZkClient {
     pub handlers: KafkaZkHandlers,
 }
 
-impl KafkaZkClient {
-    pub fn init(conn_str: &str, sess_timeout: Duration) -> ZkResult<KafkaZkClient> {
-        let handlers = KafkaZkHandlers {
-            change_handlers: Arc::new(RwLock::new(HashMap::new())),
-            child_change_handlers: Arc::new(RwLock::new(HashMap::new())),
-        };
+const GET_REQUEST: u32 = 0;
+const GET_CHILDREN_REQUEST: u32 = 1;
+const EXIST_REQUEST: u32 = 2;
 
-        let client = ZooKeeper::connect(
+impl KafkaZkClient {
+    pub fn init(
+        conn_str: &str,
+        sess_timeout: Duration,
+        handlers: KafkaZkHandlers,
+    ) -> ZkResult<KafkaZkClient> {
+        match ZooKeeper::connect(
             conn_str,
             sess_timeout,
-            KafkaZkWatcher {
-                handlers: handlers.clone(),
-            },
-        );
-
-        match wait_until_connected(client.as_ref().unwrap(), Duration::from_millis(10)) {
-            Ok(_) => Ok(KafkaZkClient {
-                client: client.unwrap(),
+            KafkaZkWatcher::init(handlers.clone()),
+        ) {
+            Ok(client) => Ok(KafkaZkClient {
+                client: client,
                 handlers: handlers.clone(),
             }),
             Err(e) => Err(e),
@@ -66,17 +69,67 @@ impl KafkaZkClient {
     }
 
     fn create_recursive(&self, path: &str, data: Vec<u8>) -> ZkResult<()> {
-        let path = self.client.create(
+        let res = self.client.create(
             path,
-            data,
+            data.clone(),
             Acl::open_unsafe().clone(),
             zookeeper::CreateMode::Persistent,
         );
 
-        // TODO: maybe we should retry
-        match path {
+        match res {
             Ok(_) => Ok(()),
-            Err(e) => Err(e),
+            Err(e1) => match e1 {
+                ZkError::NoNode => match self.recursive_create(get_parent(path).as_str()) {
+                    Ok(_) => match self.client.create(
+                        path,
+                        data,
+                        Acl::open_unsafe().clone(),
+                        zookeeper::CreateMode::Persistent,
+                    ) {
+                        Ok(_) => Ok(()),
+                        Err(e) => Err(e),
+                    },
+                    Err(e2) => match e2 {
+                        ZkError::NodeExists => Ok(()),
+                        _ => Err(e2),
+                    },
+                },
+                ZkError::NodeExists => Ok(()),
+                _ => Err(e1),
+            },
+        }
+    }
+
+    fn recursive_create(&self, path: &str) -> ZkResult<()> {
+        if path == "" {
+            return Ok(());
+        }
+
+        match self.client.create(
+            path,
+            Vec::new(),
+            Acl::open_unsafe().clone(),
+            zookeeper::CreateMode::Persistent,
+        ) {
+            Ok(_) => Ok(()),
+            Err(e1) => match e1 {
+                ZkError::NoNode => match self.recursive_create(get_parent(path).as_str()) {
+                    Ok(_) => match self.client.create(
+                        path,
+                        Vec::new(),
+                        Acl::open_unsafe().clone(),
+                        zookeeper::CreateMode::Persistent,
+                    ) {
+                        Ok(_) => Ok(()),
+                        Err(e) => Err(e),
+                    },
+                    Err(e2) => match e2 {
+                        ZkError::NodeExists => Ok(()),
+                        _ => Err(e2),
+                    },
+                },
+                _ => Err(e1),
+            },
         }
     }
 
@@ -95,7 +148,7 @@ impl KafkaZkClient {
 
         let (curr_epoch, curr_epoch_zk_version) = match result {
             Some(info) => (info.0, info.1.version),
-            None => match self.create_controller_epoch_znode(INITIAL_CONTROLLER_EPOCH) {
+            None => match self.create_controller_epoch_znode() {
                 Ok(r) => r,
                 Err(e) => return Err(e),
             },
@@ -153,10 +206,10 @@ impl KafkaZkClient {
         }
     }
 
-    fn create_controller_epoch_znode(&self, epoch: u128) -> ZkResult<(u128, i32)> {
+    fn create_controller_epoch_znode(&self) -> ZkResult<(u128, i32)> {
         match self.client.create(
             ControllerEpochZNode::path().as_str(),
-            ControllerEpochZNode::encode(epoch),
+            ControllerEpochZNode::encode(INITIAL_CONTROLLER_EPOCH),
             Acl::open_unsafe().clone(),
             CreateMode::Persistent,
         ) {
@@ -178,10 +231,20 @@ impl KafkaZkClient {
     }
 
     fn get_controller_epoch(&self) -> ZkResult<Option<(u128, Stat)>> {
-        match self
-            .client
-            .get_data(ControllerEpochZNode::path().as_str(), true)
-        {
+        let path = ControllerEpochZNode::path();
+        let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
+            Ok(res) => res,
+            Err(_) => false,
+        };
+
+        let result = match watch {
+            true => self
+                .client
+                .get_data_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+            false => self.client.get_data(path.as_str(), false),
+        };
+
+        match result {
             Ok(resp) => Ok(Some((ControllerEpochZNode::decode(&resp.0), resp.1))),
             Err(e) => match e {
                 ZkError::NoNode => Ok(None),
@@ -191,7 +254,19 @@ impl KafkaZkClient {
     }
 
     pub fn get_controller_id(&self) -> ZkResult<Option<u32>> {
-        match self.client.get_data(ControllerZNode::path().as_str(), true) {
+        let path = ControllerZNode::path();
+        let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
+            Ok(res) => res,
+            Err(_) => false,
+        };
+
+        let result = match watch {
+            true => self
+                .client
+                .get_data_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+            false => self.client.get_data(path.as_str(), false),
+        };
+        match result {
             Ok(resp) => Ok(Some(ControllerZNode::decode(&resp.0))),
             Err(e) => match e {
                 ZkError::NoNode => Ok(None),
@@ -259,17 +334,39 @@ impl KafkaZkClient {
     }
 
     fn get_stat_after_node_exists(&self, path: &str) -> ZkResult<Stat> {
-        match self.client.exists(path, false) {
-            Ok(resp) => Ok(resp.unwrap()),
+        let watch = match self.should_watch(path.to_string(), GET_REQUEST, true) {
+            Ok(watch) => watch,
+            Err(_) => false,
+        };
+
+        let result = match watch {
+            true => self
+                .client
+                .get_data_w(path, KafkaZkWatcher::init(self.handlers.clone())),
+            false => self.client.get_data(path, false),
+        };
+
+        match result {
+            Ok(resp) => Ok(resp.1),
             Err(e) => Err(e),
         }
     }
 
     pub fn get_broker(&self, broker_id: u32) -> ZkResult<Option<BrokerInfo>> {
-        match self
-            .client
-            .get_data(BrokerIdZNode::path(broker_id).as_str(), false)
-        {
+        let path = BrokerIdZNode::path(broker_id);
+        let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
+            Ok(watch) => watch,
+            Err(_) => false,
+        };
+
+        let result = match watch {
+            true => self
+                .client
+                .get_data_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+            false => self.client.get_data(path.as_str(), false),
+        };
+
+        match result {
             Ok(data) => Ok(Some(BrokerIdZNode::decode(&data.0))),
             Err(e) => match e {
                 ZkError::NoNode => Ok(None),
@@ -278,16 +375,18 @@ impl KafkaZkClient {
         }
     }
 
+    // TODO: add watcher setup
     pub fn get_all_brokers(&self) -> ZkResult<Vec<Option<BrokerInfo>>> {
-        let broker_ids: Vec<u32> = match self.get_children(BrokerIdsZNode::path().as_str()) {
+        let mut broker_ids: Vec<u32> = match self.get_children(BrokerIdsZNode::path().as_str()) {
             Ok(list) => list.iter().map(|id| id.parse::<u32>().unwrap()).collect(),
             Err(e) => return Err(e),
         };
+        broker_ids.sort();
 
         let mut brokers: Vec<Option<BrokerInfo>> = Vec::new();
 
-        for id in broker_ids.iter() {
-            match self.get_broker(*id) {
+        for id in broker_ids {
+            match self.get_broker(id) {
                 Ok(info) => brokers.push(info),
                 Err(e) => return Err(e),
             }
@@ -296,20 +395,96 @@ impl KafkaZkClient {
         Ok(brokers)
     }
 
-    pub fn delete_isr_change_notifications(&self, epoch_zk_version: i32) {
-        todo!();
+    pub fn delete_isr_change_notifications(&self, epoch_zk_version: i32) -> ZkResult<()> {
+        let path = IsrChangeNotificationZNode::path("".to_string());
+        let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
+            Ok(watch) => watch,
+            Err(_) => false,
+        };
+
+        let result = match watch {
+            true => self
+                .client
+                .get_children_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+            false => self.client.get_children(path.as_str(), false),
+        };
+
+        match result {
+            Ok(data) => {
+                return self.delete_isr_change_notifications_with_sequence_num(
+                    data.iter()
+                        .map(|child| IsrChangeNotificationZNode::seq_num(child.to_string()))
+                        .collect(),
+                    epoch_zk_version,
+                );
+            }
+            Err(e) => match e {
+                ZkError::NoNode => {}
+                _ => return Err(e),
+            },
+        };
+
+        Ok(())
     }
 
-    pub fn get_all_broker_and_epoch(&self) -> HashMap<BrokerInfo, u128> {
-        todo!();
+    pub fn delete_isr_change_notifications_with_sequence_num(
+        &self,
+        seq_num: Vec<String>,
+        version: i32,
+    ) -> ZkResult<()> {
+        for num in seq_num {
+            let _ = self.client.delete(
+                IsrChangeNotificationSequenceZNode::path(num).as_str(),
+                Some(version),
+            );
+        }
+
+        Ok(())
+    }
+    pub fn get_all_broker_and_epoch(&self) -> ZkResult<HashMap<BrokerInfo, i64>> {
+        let mut broker_ids: Vec<u32> = match self.get_children(BrokerIdsZNode::path().as_str()) {
+            Ok(list) => list.iter().map(|id| id.parse::<u32>().unwrap()).collect(),
+            Err(e) => return Err(e),
+        };
+        broker_ids.sort();
+
+        let mut brokers: HashMap<BrokerInfo, i64> = HashMap::new();
+
+        for id in broker_ids {
+            match self
+                .client
+                .get_data(BrokerIdZNode::path(id).as_str(), false)
+            {
+                Ok(data) => {
+                    brokers.insert(BrokerIdZNode::decode(&data.0), data.1.czxid);
+                }
+                Err(e) => match e {
+                    ZkError::NoNode => {}
+                    _ => return Err(e),
+                },
+            };
+        }
+
+        Ok(brokers)
     }
     // Topic + Partition
 
-    pub fn get_all_topics(&self, watch: bool) -> ZkResult<HashSet<String>> {
-        match self
-            .client
-            .get_children(TopicsZNode::path().as_str(), watch)
+    pub fn get_all_topics(&self, register_watch: bool) -> ZkResult<HashSet<String>> {
+        let path = TopicsZNode::path();
+        let watch = match self.should_watch(path.to_string(), GET_CHILDREN_REQUEST, register_watch)
         {
+            Ok(watch) => watch,
+            Err(_) => false,
+        };
+
+        let result = match watch {
+            true => self
+                .client
+                .get_children_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+            false => self.client.get_children(path.as_str(), false),
+        };
+
+        match result {
             Ok(resp) => Ok(HashSet::from_iter(resp.iter().cloned())),
             Err(e) => match e {
                 ZkError::NoNode => Ok(HashSet::new()),
@@ -318,12 +493,7 @@ impl KafkaZkClient {
         }
     }
 
-    // TODO: not sure if this is correct, need to check
-    pub fn create_topic_partitions(
-        &self,
-        topics: Vec<String>,
-        expected_controller_epoch_zk_version: i32,
-    ) -> Vec<ZkResult<String>> {
+    fn create_topic_partitions(&self, topics: Vec<String>) -> Vec<ZkResult<String>> {
         let resps: Vec<ZkResult<String>> = topics
             .iter()
             .map(|topic| {
@@ -338,6 +508,50 @@ impl KafkaZkClient {
         resps
     }
 
+    fn create_topic_partition(&self, partitions: Vec<TopicPartition>) -> Vec<ZkResult<String>> {
+        let resps: Vec<ZkResult<String>> = partitions
+            .iter()
+            .map(|partition| {
+                self.client.create(
+                    TopicPartitionZNode::path(partition.topic.as_str(), partition.partition)
+                        .as_str(),
+                    Vec::new(),
+                    Acl::open_unsafe().clone(),
+                    CreateMode::Persistent,
+                )
+            })
+            .collect();
+
+        resps
+    }
+
+    pub fn create_topic_partition_state(
+        &self,
+        leader_isr_and_epoch: HashMap<TopicPartition, LeaderAndIsr>,
+    ) -> Vec<ZkResult<String>> {
+        self.create_topic_partitions(
+            leader_isr_and_epoch
+                .iter()
+                .map(|(partition, _)| partition.topic.clone())
+                .collect(),
+        );
+
+        self.create_topic_partition(leader_isr_and_epoch.keys().cloned().collect());
+
+        leader_isr_and_epoch
+            .iter()
+            .map(|(partition, leader_and_isr)| {
+                self.client.create(
+                    TopicPartitionStateZNode::path(partition.topic.as_str(), partition.partition)
+                        .as_str(),
+                    TopicPartitionStateZNode::encode(leader_and_isr.clone()),
+                    Acl::open_unsafe().clone(),
+                    CreateMode::Persistent,
+                )
+            })
+            .collect()
+    }
+
     /// gets the partition numbers for the given topics
     pub fn get_partitions_for_topics(
         &self,
@@ -350,9 +564,9 @@ impl KafkaZkClient {
                     match assignment {
                         Some(am) => {
                             let mut partition_numbers = Vec::new();
-                            for t_partition in am.partitions.iter() {
-                                if t_partition.0.topic == topic.to_string() {
-                                    partition_numbers.push(t_partition.0.partition);
+                            for partition in am.partitions.iter() {
+                                if partition.0.topic == topic.to_string() {
+                                    partition_numbers.push(partition.0.partition);
                                 }
                             }
                             partitions.insert(topic.to_string(), partition_numbers);
@@ -377,8 +591,17 @@ impl KafkaZkClient {
         let resps: Vec<ZkResult<(Vec<u8>, Stat)>> = topics
             .iter()
             .map(|topic| {
-                self.client
-                    .get_data(TopicZNode::path(topic).as_str(), false)
+                let path = TopicZNode::path(topic);
+                let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
+                    Ok(resp) => resp,
+                    Err(_) => false,
+                };
+                match watch {
+                    true => self
+                        .client
+                        .get_data_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+                    false => self.client.get_data(path.as_str(), false),
+                }
             })
             .collect();
         let mut i = 0;
@@ -402,26 +625,40 @@ impl KafkaZkClient {
         Ok(partition_assignments)
     }
 
-    pub fn get_replica_assignment_for_topics(
+    pub fn get_full_replica_assignment_for_topics(
         &self,
         topics: Vec<String>,
-    ) -> ZkResult<HashMap<String, ReplicaAssignment>> {
-        let mut replica_assignment: HashMap<String, ReplicaAssignment> = HashMap::new();
+    ) -> ZkResult<HashMap<TopicPartition, ReplicaAssignment>> {
+        let mut replica_assignment: HashMap<TopicPartition, ReplicaAssignment> = HashMap::new();
         let resps: Vec<Result<(Vec<u8>, Stat), ZkError>> = topics
             .iter()
             .map(|topic| {
-                self.client
-                    .get_data(TopicZNode::path(topic).as_str(), false)
+                let path = TopicZNode::path(topic);
+                let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
+                    Ok(resp) => resp,
+                    Err(_) => false,
+                };
+                match watch {
+                    true => self
+                        .client
+                        .get_data_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+                    false => self.client.get_data(path.as_str(), false),
+                }
             })
             .collect();
         let mut i = 0;
 
-        for resp in resps.iter() {
+        for resp in resps {
             match resp {
                 Ok(data) => {
-                    replica_assignment.insert(topics[i].clone(), TopicZNode::decode(&data.0));
+                    replica_assignment.extend(
+                        TopicZNode::decode_with_topic(topics[i].clone(), &data.0).assignment,
+                    );
                 }
-                Err(e) => return Err(*e),
+                Err(e) => match e {
+                    ZkError::NoNode => {}
+                    _ => return Err(e),
+                },
             }
             i = i + 1;
         }
@@ -457,7 +694,32 @@ impl KafkaZkClient {
         &self,
         partitions: Vec<TopicPartition>,
     ) -> ZkResult<HashMap<TopicPartition, LeaderAndIsr>> {
-        todo!();
+        let mut leader_and_isr: HashMap<TopicPartition, LeaderAndIsr> = HashMap::new();
+
+        for partition in partitions {
+            let path =
+                TopicPartitionStateZNode::path(partition.topic.as_str(), partition.partition);
+            let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
+                Ok(watch) => watch,
+                Err(_) => false,
+            };
+
+            let result = match watch {
+                true => self
+                    .client
+                    .get_data_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+                false => self.client.get_data(path.as_str(), false),
+            };
+
+            match result {
+                Ok(resp) => {
+                    leader_and_isr.insert(partition, TopicPartitionStateZNode::decode(&resp.0));
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(leader_and_isr)
     }
 
     pub fn set_leader_and_isr(
@@ -484,12 +746,21 @@ impl KafkaZkClient {
         &self,
         topic: &str,
         partition: u32,
-    ) -> ZkResult<Option<Vec<u8>>> {
-        match self.client.get_data(
-            TopicPartitionOffsetZNode::path(topic, partition).as_str(),
-            false,
-        ) {
-            Ok(resp) => Ok(Some((&resp.0).clone())),
+    ) -> ZkResult<Option<PartitionOffset>> {
+        let path = TopicPartitionOffsetZNode::path(topic, partition);
+        let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
+            Ok(resp) => resp,
+            Err(_) => false,
+        };
+
+        let result = match watch {
+            true => self
+                .client
+                .get_data_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+            false => self.client.get_data(path.as_str(), false),
+        };
+        match result {
+            Ok(resp) => Ok(Some(TopicPartitionOffsetZNode::decode(&resp.0))),
             Err(e) => match e {
                 ZkError::NoNode => Ok(None),
                 _ => Err(e),
@@ -519,35 +790,119 @@ impl KafkaZkClient {
     pub fn get_topic_partition_states(
         &self,
         partitions: Vec<TopicPartition>,
-    ) -> ZkResult<HashMap<TopicPartition, (LeaderAndIsr, u128)>> {
-        todo!();
+    ) -> ZkResult<HashMap<TopicPartition, LeaderAndIsr>> {
+        let mut partition_states: HashMap<TopicPartition, LeaderAndIsr> = HashMap::new();
+
+        for partition in partitions {
+            let path =
+                TopicPartitionStateZNode::path(partition.topic.as_str(), partition.partition);
+            let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
+                Ok(watch) => watch,
+                Err(_) => false,
+            };
+            let result = match watch {
+                true => self
+                    .client
+                    .get_data_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+                false => self.client.get_data(path.as_str(), false),
+            };
+
+            match result {
+                Ok(resp) => {
+                    partition_states
+                        .insert(partition.clone(), TopicPartitionStateZNode::decode(&resp.0));
+                }
+                Err(e) => match e {
+                    ZkError::NoNode => {}
+                    _ => return Err(e),
+                },
+            };
+        }
+
+        Ok(partition_states)
     }
 
     pub fn get_replica_assignment_and_topic_ids_for_topics(
         &self,
         topics: HashSet<String>,
-    ) -> ZkResult<HashSet<TopicIdReplicaAssignment>> {
-        todo!();
+    ) -> ZkResult<Vec<TopicIdReplicaAssignment>> {
+        let mut topic_replica_assignment: Vec<TopicIdReplicaAssignment> = Vec::new();
+
+        for topic in topics {
+            let path = TopicZNode::path(topic.as_str());
+            let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
+                Ok(watch) => watch,
+                Err(_) => false,
+            };
+            let result = match watch {
+                true => self
+                    .client
+                    .get_data_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+                false => self.client.get_data(path.as_str(), false),
+            };
+
+            match result {
+                Ok(resp) => {
+                    topic_replica_assignment.push(TopicZNode::decode_with_topic(topic, &resp.0));
+                }
+                Err(e) => match e {
+                    ZkError::NoNode => {
+                        topic_replica_assignment.push(TopicIdReplicaAssignment {
+                            topic: topic,
+                            assignment: HashMap::new(),
+                        });
+                    }
+                    _ => return Err(e),
+                },
+            };
+        }
+
+        Ok(topic_replica_assignment)
     }
 
     // ZooKeeper
 
     pub fn get_children(&self, path: &str) -> ZkResult<Vec<String>> {
-        match self.client.get_children(path, false) {
-            Ok(resp) => Ok(resp),
-            Err(e) => Err(e),
-        }
-    }
+        let watch = match self.should_watch(path.to_string(), GET_CHILDREN_REQUEST, true) {
+            Ok(watch) => watch,
+            Err(_) => false,
+        };
 
-    pub fn register_znode_change_handler(&self, handler: Arc<dyn ZkChangeHandler>) {
-        self.handlers.register_znode_change_handler(handler);
+        let result = match watch {
+            true => self
+                .client
+                .get_children_w(path, KafkaZkWatcher::init(self.handlers.clone())),
+            false => self.client.get_children(path, false),
+        };
+
+        match result {
+            Ok(resp) => Ok(resp),
+            Err(e) => match e {
+                ZkError::NoNode => Ok(Vec::new()),
+                _ => Err(e),
+            },
+        }
     }
 
     pub fn register_znode_change_handler_and_check_existence(
         &self,
         handler: Arc<dyn ZkChangeHandler>,
-    ) {
-        todo!();
+    ) -> ZkResult<bool> {
+        self.register_znode_change_handler(handler.clone());
+        match self.client.exists_w(
+            handler.path().as_str(),
+            KafkaZkWatcher::init(self.handlers.clone()),
+        ) {
+            Ok(_) => Ok(true),
+            Err(e) => match e {
+                ZkError::NoNode => Ok(false),
+                _ => Err(e),
+            },
+        }
+    }
+
+    pub fn register_znode_change_handler(&self, handler: Arc<dyn ZkChangeHandler>) {
+        self.handlers.register_znode_change_handler(handler);
     }
 
     pub fn unregister_znode_change_handler(&self, path: &str) {
@@ -561,30 +916,423 @@ impl KafkaZkClient {
     pub fn unregister_znode_child_change_handler(&self, path: &str) {
         self.handlers.unregister_znode_child_change_handler(path);
     }
+
+    fn should_watch(&self, path: String, req_type: u32, register_watch: bool) -> ZkResult<bool> {
+        match req_type {
+            GET_CHILDREN_REQUEST => {
+                let handlers = self.handlers.child_change_handlers.read().unwrap();
+                match handlers.get(&path) {
+                    Some(_) => Ok(true && register_watch),
+                    None => Ok(false),
+                }
+            }
+            GET_REQUEST | EXIST_REQUEST => {
+                let handlers = self.handlers.change_handlers.read().unwrap();
+                match handlers.get(&path) {
+                    Some(_) => Ok(true),
+                    None => Ok(false),
+                }
+            }
+            _ => Err(ZkError::NoAuth),
+        }
+    }
 }
 
-fn wait_until_connected(client: &ZooKeeper, timeout: Duration) -> ZkResult<()> {
-    // TODO: need to check correctness
-    let mut state: ZkState = ZkState::Closed;
-    client.add_listener(move |state| {
-        let start = SystemTime::now();
-        while state != ZkState::Connected && state != ZkState::Connecting {
-            if start.elapsed().unwrap() >= timeout {
-                eprintln!("Connection timeout");
-                break;
+#[cfg(test)]
+mod client_tests {
+    use std::{
+        collections::HashMap,
+        sync::{Arc, RwLock},
+        time::Duration,
+    };
+
+    use zookeeper::{recipes::leader, Acl, CreateMode, ZkError, ZkResult};
+
+    use crate::{
+        common::{
+            broker::BrokerInfo,
+            topic_partition::{LeaderAndIsr, ReplicaAssignment, TopicPartition},
+        },
+        controller::constants::INITIAL_CONTROLLER_EPOCH,
+        zk::{
+            zk_data::{
+                BrokerIdZNode, ControllerEpochZNode, ControllerZNode, PersistentZkPaths,
+                TopicPartitionStateZNode, TopicPartitionZNode, TopicPartitionsZNode, TopicZNode,
+                TopicsZNode,
+            },
+            zk_watcher::KafkaZkHandlers,
+        },
+    };
+
+    use super::KafkaZkClient;
+
+    const CONN_STR: &str = "localhost:2181";
+    const SESS_TIMEOUT: Duration = Duration::from_secs(3);
+
+    fn get_client() -> KafkaZkClient {
+        let handlers = KafkaZkHandlers {
+            change_handlers: Arc::new(RwLock::new(HashMap::new())),
+            child_change_handlers: Arc::new(RwLock::new(HashMap::new())),
+        };
+        let client = KafkaZkClient::init(CONN_STR, SESS_TIMEOUT, handlers);
+        assert!(!client.is_err());
+        client.unwrap()
+    }
+
+    #[test]
+    fn test_create_top_level_paths() {
+        let client = get_client();
+
+        client.create_top_level_paths();
+        let persistent_path = PersistentZkPaths::init();
+        for path in persistent_path.paths {
+            let result = client.client.get_data(&path, false);
+
+            match result {
+                Ok(_) => {}
+                Err(e) => match e {
+                    ZkError::NodeExists => (),
+                    _ => panic!("failed with some other reasons"),
+                },
             }
         }
+    }
 
-        if state == ZkState::AuthFailed {
-            eprintln!("Conntion AuthFailed");
-        } else if state == ZkState::Closed {
-            eprintln!("Connection closed");
+    #[test]
+    fn test_register_controller_and_increment_controller_epoch() {
+        let id = 0;
+        let client = get_client();
+        let _ = client.register_controller_and_increment_controller_epoch(id);
+
+        match client
+            .client
+            .get_data(ControllerZNode::path().as_str(), false)
+        {
+            Ok(data) => {
+                assert_eq!(ControllerZNode::decode(&data.0), id);
+            }
+            Err(e) => panic!("{}", e),
         }
-    });
 
-    if state != ZkState::Connected || state != ZkState::ConnectedReadOnly {
-        return Err(ZkError::SystemError);
-    } else {
-        return Ok(());
+        match client
+            .client
+            .get_data(ControllerEpochZNode::path().as_str(), false)
+        {
+            Ok(data) => {
+                assert_eq!(ControllerEpochZNode::decode(&data.0), 1);
+            }
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_create_controller_epoch_znode() {
+        let client = get_client();
+        let _ = client.create_controller_epoch_znode();
+
+        match client
+            .client
+            .get_data(ControllerEpochZNode::path().as_str(), false)
+        {
+            Ok(data) => {
+                assert_eq!(
+                    ControllerEpochZNode::decode(&data.0),
+                    INITIAL_CONTROLLER_EPOCH
+                );
+            }
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_get_controller_epoch() {
+        let client = get_client();
+        let result = client.get_controller_epoch();
+
+        match result {
+            Ok(resp) => match resp {
+                Some(epoch) => assert_eq!(epoch.0, 0),
+                None => panic!("controller_epoch is not there"),
+            },
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_get_controller_id() {
+        let client = get_client();
+        let _ = client.register_controller_and_increment_controller_epoch(0);
+        let result = client.get_controller_id();
+        match result {
+            Ok(resp) => match resp {
+                Some(id) => assert_eq!(id, 0),
+                None => panic!("controller has not registerd"),
+            },
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_check_controller() {
+        let client = get_client();
+        let _ = client.register_controller_and_increment_controller_epoch(0);
+        match client.check_controller(0) {
+            Ok(resp) => assert_eq!(true, resp),
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_check_epoch() {
+        let client = get_client();
+        match client.check_epoch(1) {
+            Ok(resp) => assert_eq!(false, resp),
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_register_broker() {
+        let client = get_client();
+        let broker_info: BrokerInfo = BrokerInfo::init("localhost", "223", 0);
+        let _ = client.register_broker(broker_info);
+        match client
+            .client
+            .get_data(BrokerIdZNode::path(0).as_str(), false)
+        {
+            Ok(_) => {}
+            Err(e) => panic!("register failed {}", e),
+        }
+    }
+
+    #[test]
+    fn test_get_stat_after_node_exists() {
+        let client = get_client();
+        let broker_info: BrokerInfo = BrokerInfo::init("localhost", "223", 0);
+        let _ = client.register_broker(broker_info);
+        match client.get_stat_after_node_exists(BrokerIdZNode::path(0).as_str()) {
+            Ok(_) => {}
+            Err(e) => panic!("register failed {}", e),
+        }
+    }
+
+    #[test]
+    fn test_get_broker() {
+        let client = get_client();
+        let broker_info: BrokerInfo = BrokerInfo::init("localhost", "223", 0);
+        let _ = client.register_broker(broker_info.clone());
+        match client.get_broker(0) {
+            Ok(fetched) => match fetched {
+                Some(info) => {
+                    assert_eq!(info.hostname, broker_info.hostname);
+                    assert_eq!(info.port, broker_info.port);
+                    assert_eq!(info.id, broker_info.id);
+                }
+                None => panic!("broker is not registered"),
+            },
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_get_all_brokers() {
+        let client = get_client();
+        let broker_info0: BrokerInfo = BrokerInfo::init("localhost", "223", 0);
+        let broker_info1: BrokerInfo = BrokerInfo::init("localhost", "224", 1);
+        let broker_infos = vec![broker_info0.clone(), broker_info1.clone()];
+        let _ = client.register_broker(broker_info0.clone());
+        let _ = client.register_broker(broker_info1.clone());
+        let mut i = 0;
+        match client.get_all_brokers() {
+            Ok(fetched) => {
+                for broker in fetched {
+                    match broker {
+                        Some(info) => {
+                            assert_eq!(info.hostname, broker_infos[i].hostname);
+                            assert_eq!(info.port, broker_infos[i].port);
+                            assert_eq!(info.id, broker_infos[i].id);
+                        }
+                        None => panic!("brokers should all be up"),
+                    };
+                    i = i + 1;
+                }
+            }
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_get_all_broker_and_epoch() {
+        let client = get_client();
+        let broker_info0: BrokerInfo = BrokerInfo::init("localhost", "223", 0);
+        let broker_info1: BrokerInfo = BrokerInfo::init("localhost", "224", 1);
+        let broker_infos = vec![broker_info0.clone(), broker_info1.clone()];
+        let _ = client.register_broker(broker_info0.clone());
+        let _ = client.register_broker(broker_info1.clone());
+
+        match client.get_all_broker_and_epoch() {
+            Ok(fetched) => {
+                for info in broker_infos {
+                    assert!(fetched.contains_key(&info));
+                    assert!(!(*fetched.get(&info).unwrap() == (2 as i64)));
+                }
+            }
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_delete_isr_change_notifications() {
+        todo!();
+    }
+
+    #[test]
+    fn test_delete_isr_change_notifications_with_sequence_num() {
+        todo!();
+    }
+
+    #[test]
+    fn test_get_all_topics() {
+        let client = get_client();
+        let _ = client.client.create(
+            TopicsZNode::path().as_str(),
+            Vec::new(),
+            Acl::open_unsafe().clone(),
+            CreateMode::Persistent,
+        );
+        let _ = client.client.create(
+            format!("{}/test", TopicsZNode::path()).as_str(),
+            Vec::new(),
+            Acl::open_unsafe().clone(),
+            CreateMode::Persistent,
+        );
+
+        match client.get_all_topics(false) {
+            Ok(resp) => assert!(resp.contains("test")),
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_create_topic_partitions() {
+        let client = get_client();
+        let _ = client.create_topic_partitions(vec!["test".to_string()]);
+
+        match client
+            .client
+            .exists(TopicPartitionsZNode::path("test").as_str(), false)
+        {
+            Ok(resp) => match resp {
+                Some(_) => {}
+                None => panic!("topic partition is not created"),
+            },
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_create_topic_partition() {
+        let client = get_client();
+        let _ = client.create_topic_partition(vec![TopicPartition {
+            topic: "test".to_string(),
+            partition: 0,
+        }]);
+
+        match client
+            .client
+            .exists(TopicPartitionZNode::path("test", 0).as_str(), false)
+        {
+            Ok(resp) => match resp {
+                Some(_) => {}
+                None => panic!("topic partition is not created"),
+            },
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_create_topic_partition_state() {
+        let client = get_client();
+        let partition = TopicPartition {
+            topic: "test".to_string(),
+            partition: 0,
+        };
+
+        let leader_and_isr = LeaderAndIsr::init(0, vec![0, 1, 2], 1, 1);
+
+        let mut leader_isr_and_epoch = HashMap::new();
+        leader_isr_and_epoch.insert(partition, leader_and_isr);
+        let _ = client.create_topic_partition_state(leader_isr_and_epoch);
+
+        match client
+            .client
+            .get_data(TopicPartitionStateZNode::path("test", 0).as_str(), false)
+        {
+            Ok(resp) => {
+                let state = TopicPartitionStateZNode::decode(&resp.0);
+                assert_eq!(state.leader, 0);
+                assert_eq!(state.isr, vec![0, 1, 2]);
+                assert_eq!(state.controller_epoch, 1);
+                assert_eq!(state.leader_epoch, 1);
+            }
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_get_partitions_for_topics() {
+        // we need a set function to examine this
+        todo!();
+    }
+
+    #[test]
+    fn test_get_partition_assignment_for_topics() {
+        // we need a set function to examine this
+        todo!();
+    }
+
+    #[test]
+    fn test_get_full_replica_assignment_for_topics() {
+        // we need a set function to examine this
+        todo!();
+    }
+
+    #[test]
+    fn test_set_replica_assignment_for_topics() {
+        let client = get_client();
+        let topics = vec!["test".to_string()];
+        let assignment = ReplicaAssignment::init(HashMap::new(), HashMap::new(), HashMap::new());
+        let replica_assignments = vec![assignment];
+        let version = None;
+
+        let _ = client.set_replica_assignment_for_topics(topics, replica_assignments, version);
+
+        match client
+            .client
+            .get_data(TopicZNode::path("test").as_str(), false)
+        {
+            Ok(resp) => {
+                let data = TopicZNode::decode(&resp.0);
+                assert!(data.partitions.is_empty());
+                assert!(data.adding_replicas.is_empty());
+                assert!(data.removing_replicas.is_empty());
+            }
+            Err(e) => panic!("{}", e),
+        }
+    }
+
+    #[test]
+    fn test_get_leader_and_isr() {
+        todo!();
+    }
+
+    #[test]
+    fn test_set_leader_and_isr() {
+        todo!();
+    }
+
+    #[test]
+    fn test_get_children() {
+        todo!();
     }
 }
