@@ -596,7 +596,11 @@ impl Controller {
     }
 
     fn on_new_partition_creation(&self, new_partitions: HashSet<TopicPartition>) {
-        todo!();
+        self.partition_state_machine.handle_state_change();
+        self.replica_state_machine.handle_state_change();
+        self.partition_state_machine.handle_state_change();
+
+        self.replica_state_machine.handle_state_change();
     }
 
     fn on_broker_startup(&self, broker: Vec<u32>) {

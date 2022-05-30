@@ -34,7 +34,7 @@ impl ReplicaStateMachine {
         todo!();
     }
 
-    pub fn handle_state_change() {
+    pub fn handle_state_change(&self) {
         todo!();
     }
 }

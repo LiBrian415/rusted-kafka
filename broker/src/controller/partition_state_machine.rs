@@ -33,11 +33,11 @@ impl PartitionStateMachine {
         todo!();
     }
 
-    pub fn handle_state_change() {
+    pub fn handle_state_change(&self) {
         todo!();
     }
 
-    pub fn trigger_online_partition_state_change() {
+    pub fn trigger_online_partition_state_change(&self) {
         todo!();
     }
 }
