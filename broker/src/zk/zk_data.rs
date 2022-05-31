@@ -186,14 +186,6 @@ impl IsrChangeNotificationZNode {
         format!("/isr_change_notification/isr_change_{}", seq_num).to_string()
     }
 
-    pub fn encode(partitions: HashSet<TopicPartition>) -> Vec<u8> {
-        todo!();
-    }
-
-    pub fn decode(data: &Vec<u8>) -> HashSet<TopicPartition> {
-        todo!();
-    }
-
     pub fn seq_num(path: String) -> String {
         let prefix = "/isr_change_notification/isr_change_".to_string();
         path[prefix.len()..].to_string()
@@ -212,11 +204,11 @@ impl IsrChangeNotificationSequenceZNode {
     }
 
     pub fn encode(partitions: HashSet<TopicPartition>) -> Vec<u8> {
-        todo!();
+        serde_json::to_vec(&partitions).unwrap()
     }
 
     pub fn decode(data: &Vec<u8>) -> HashSet<TopicPartition> {
-        todo!();
+        serde_json::from_slice::<HashSet<TopicPartition>>(data).unwrap()
     }
 
     pub fn seq_num(path: String) -> String {
