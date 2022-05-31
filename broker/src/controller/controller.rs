@@ -216,8 +216,8 @@ impl Controller {
             }
         };
         let new_topics = topics.difference(&context.all_topics).cloned().collect();
-        let deleted_topics: HashSet<String> =
-            context.all_topics.difference(&topics).cloned().collect();
+        // let deleted_topics: HashSet<String> =
+        //     context.all_topics.difference(&topics).cloned().collect();
 
         context.set_all_topics(topics);
 
@@ -488,14 +488,18 @@ impl Controller {
         }
     }
 
-    fn send_update_metadata_request(&self, brokers: Vec<u32>, partitions: HashSet<TopicPartition>) {
+    fn send_update_metadata_request(
+        &self,
+        _brokers: Vec<u32>,
+        _partitions: HashSet<TopicPartition>,
+    ) {
         // do this later, may need a discussion on grpc interface
-        todo!();
+        // todo!();
     }
 
-    fn process_update_notifications(&self, partitions: Vec<TopicPartition>) {
+    fn process_update_notifications(&self, _partitions: Vec<TopicPartition>) {
         // just send update metadata request
-        todo!();
+        // todo!();
     }
 
     fn process_topic_ids(&self, _topic_id_assignment: Vec<TopicIdReplicaAssignment>) {

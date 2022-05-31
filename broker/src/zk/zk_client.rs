@@ -1,9 +1,9 @@
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, RwLock},
-    time::{Duration, SystemTime},
+    time::Duration,
 };
-use zookeeper::{Acl, CreateMode, Stat, ZkError, ZkResult, ZkState, ZooKeeper};
+use zookeeper::{Acl, CreateMode, Stat, ZkError, ZkResult, ZooKeeper};
 
 use super::zk_data::{
     IsrChangeNotificationSequenceZNode, IsrChangeNotificationZNode, PersistentZkPaths,
@@ -444,14 +444,57 @@ impl KafkaZkClient {
     }
 
     pub fn get_all_isr_change_notifications(&self) -> ZkResult<Vec<String>> {
-        todo!();
+        let path = IsrChangeNotificationZNode::path("".to_string());
+        let watch = match self.should_watch(path.clone(), GET_CHILDREN_REQUEST, true) {
+            Ok(watch) => watch,
+            Err(_) => false,
+        };
+
+        let result = match watch {
+            true => self
+                .client
+                .get_children_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+            false => self.client.get_children(path.as_str(), false),
+        };
+
+        match result {
+            Ok(resp) => Ok(resp),
+            Err(e) => match e {
+                ZkError::NoNode => Ok(Vec::new()),
+                _ => Err(e),
+            },
+        }
     }
 
     pub fn get_partitions_from_isr_change_notifications(
         &self,
-        seq_num: Vec<String>,
+        seq_nums: Vec<String>,
     ) -> ZkResult<Vec<TopicPartition>> {
-        todo!();
+        let mut partitions: Vec<TopicPartition> = Vec::new();
+        for seq_num in seq_nums {
+            let path = IsrChangeNotificationSequenceZNode::path(seq_num);
+            let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
+                Ok(watch) => watch,
+                Err(_) => false,
+            };
+
+            let result = match watch {
+                true => self
+                    .client
+                    .get_data_w(path.as_str(), KafkaZkWatcher::init(self.handlers.clone())),
+                false => self.client.get_data(path.as_str(), false),
+            };
+
+            match result {
+                Ok(resp) => partitions.extend(IsrChangeNotificationSequenceZNode::decode(&resp.0)),
+                Err(e) => match e {
+                    ZkError::NoNode => {}
+                    _ => return Err(e),
+                },
+            }
+        }
+
+        Ok(partitions)
     }
 
     pub fn get_all_broker_and_epoch(&self) -> ZkResult<HashMap<BrokerInfo, i64>> {
@@ -953,13 +996,9 @@ impl KafkaZkClient {
 
 #[cfg(test)]
 mod client_tests {
-    use std::{
-        collections::HashMap,
-        sync::{Arc, RwLock},
-        time::Duration,
-    };
+    use std::{collections::HashMap, time::Duration};
 
-    use zookeeper::{recipes::leader, Acl, CreateMode, ZkError, ZkResult};
+    use zookeeper::{Acl, CreateMode, ZkError};
 
     use crate::{
         common::{
@@ -967,13 +1006,10 @@ mod client_tests {
             topic_partition::{LeaderAndIsr, ReplicaAssignment, TopicPartition},
         },
         controller::constants::INITIAL_CONTROLLER_EPOCH,
-        zk::{
-            zk_data::{
-                BrokerIdZNode, ControllerEpochZNode, ControllerZNode, PersistentZkPaths,
-                TopicPartitionStateZNode, TopicPartitionZNode, TopicPartitionsZNode, TopicZNode,
-                TopicsZNode,
-            },
-            zk_watcher::KafkaZkHandlers,
+        zk::zk_data::{
+            BrokerIdZNode, ControllerEpochZNode, ControllerZNode, PersistentZkPaths,
+            TopicPartitionStateZNode, TopicPartitionZNode, TopicPartitionsZNode, TopicZNode,
+            TopicsZNode,
         },
     };
 
