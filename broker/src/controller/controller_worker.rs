@@ -3,7 +3,7 @@ use crate::zk::zk_client::KafkaZkClient;
 
 use super::{
     controller::start_controller,
-    controller_events::{ControllerEvent, Startup},
+    controller_events::{ControllerEvent, RegisterBrokerAndReElect, Startup},
 };
 use std::{
     sync::{
@@ -37,6 +37,8 @@ impl ControllerWorker {
     }
 
     pub fn activate(&self) {
+        // TODO: maybe an expire event here
+        let _ = self.event_tx.send(Box::new(RegisterBrokerAndReElect {}));
         let _ = self.event_tx.send(Box::new(Startup {}));
     }
 }
