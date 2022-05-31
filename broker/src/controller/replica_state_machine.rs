@@ -10,20 +10,26 @@ use super::{
 pub struct ReplicaStateMachine {
     broker_id: u32,
     context: Rc<RefCell<ControllerContext>>,
-    zkClient: Arc<KafkaZkClient>,
+    zk_client: Arc<KafkaZkClient>,
     channel_manager: Rc<RefCell<ControllerChannelManager>>,
     event_manager: ControllerEventManager,
 }
 
 impl ReplicaStateMachine {
     pub fn init(
-        id: u32,
+        broker_id: u32,
         context: Rc<RefCell<ControllerContext>>,
-        client: Arc<KafkaZkClient>,
+        zk_client: Arc<KafkaZkClient>,
         channel_manager: Rc<RefCell<ControllerChannelManager>>,
         event_manager: ControllerEventManager,
     ) -> ReplicaStateMachine {
-        todo!();
+        Self {
+            broker_id,
+            context,
+            zk_client,
+            channel_manager,
+            event_manager,
+        }
     }
 
     pub fn startup() {

@@ -1,23 +1,30 @@
 use std::{
+    collections::HashMap,
     error::Error,
     net::{SocketAddr, ToSocketAddrs},
-    sync::{mpsc::Sender, Arc},
+    sync::{mpsc::Sender, Arc, RwLock},
+    time::Duration,
 };
 
 use async_trait::async_trait;
-use tokio::sync::mpsc::Receiver;
-use tonic::{transport::Server, Status};
+use tokio::sync::mpsc::{self, Receiver};
+use tokio_stream::wrappers::ReceiverStream;
+use tonic::{transport::Server, Response, Status};
 
 use crate::{
     broker::{
         broker_server::{Broker, BrokerServer},
         ConsumerInput, ConsumerOutput, ProducerInput, Void,
     },
-    common::topic_partition::TopicPartition,
-    zk::zk_client::KafkaZkClient,
+    common::{broker::BrokerInfo, topic_partition::TopicPartition},
+    controller::controller_worker::ControllerWorker,
+    zk::{zk_client::KafkaZkClient, zk_watcher::KafkaZkHandlers},
 };
 
-use super::{fetcher_manager::ReplicaFetcherManager, log_manager::LogManager};
+use super::{
+    fetcher_manager::ReplicaFetcherManager, log_manager::LogManager,
+    replica_manager::ReplicaManager,
+};
 
 fn parse_socket(addr: String) -> Result<SocketAddr, Box<(dyn Error + Send + Sync)>> {
     match addr.to_socket_addrs() {
@@ -53,7 +60,8 @@ async fn wait_shutdown(receiver: Option<Receiver<()>>) {
 
 pub struct KafkaServer;
 struct BrokerStream {
-    logManager: Arc<LogManager>,
+    controller: ControllerWorker,
+    replica_manager: Arc<ReplicaManager>,
 }
 
 impl KafkaServer {
@@ -65,12 +73,24 @@ impl KafkaServer {
     ) -> Result<(), Box<(dyn Error + Send + Sync)>> {
         let addr = parse_socket(addrs[this].to_owned())?;
 
-        // let zkClient = Arc::new(KafkaZkClient::init());
+        let zk_client = Arc::new(KafkaZkClient::init(
+            "localhost:2181",
+            Duration::from_secs(3),
+        )?);
 
-        let logManager = Arc::new(LogManager::init());
-        // let fetchManager = Arc::new(ReplicaFetcherManager::init(logManager));
+        // Start controller
+        let broker_info = BrokerInfo::init(addrs[this].as_str(), "7777", 0);
+        let broker_epoch = 0;
+        let controller = ControllerWorker::startup(zk_client.clone(), broker_info, broker_epoch);
+        controller.activate();
 
-        let svc = BrokerServer::new(BrokerStream { logManager });
+        let log_manager = Arc::new(LogManager::init());
+        let replica_manager = Arc::new(ReplicaManager::init(0, None, log_manager, zk_client));
+
+        let svc = BrokerServer::new(BrokerStream {
+            controller,
+            replica_manager,
+        });
         let server = Server::builder().add_service(svc);
 
         let ready_clone = ready.clone();
@@ -108,7 +128,12 @@ impl Broker for BrokerStream {
 
         let tp = TopicPartition::init(topic.as_str(), partition);
 
-        todo!();
+        // self.replica_manager.make_leader(tp, leader_and_isr);
+
+        match self.replica_manager.append_messages(-1, tp, messages).await {
+            Ok(()) => Ok(Response::new(Void {})),
+            Err(e) => Err(tonic::Status::unknown(e.to_string())),
+        }
     }
 
     async fn consume(
@@ -123,6 +148,34 @@ impl Broker for BrokerStream {
 
         let tp = TopicPartition::init(topic.as_str(), partition);
 
+        let fetch_max_bytes = 128;
+
         todo!();
+        // let (tx, rx) = mpsc::channel(fetch_max_bytes as usize);
+
+        // let consume_log_manager = self.log_manager.clone();
+
+        // tokio::spawn(async move {
+        //     if let Some(log) = consume_log_manager.get_log(&tp) {
+        //         let messages = log.fetch_messages(offset, fetch_max_bytes, true);
+        //         match tx
+        //             .send(Result::<_, Status>::Ok(ConsumerOutput {
+        //                 messages,
+        //                 end: true,
+        //             }))
+        //             .await
+        //         {
+        //             Ok(_) => {
+        //                 // item (server response) was queued to be send to client
+        //             }
+        //             Err(_item) => {
+        //                 // output_stream was build from rx and both are dropped
+        //             }
+        //         }
+        //     }
+        // });
+
+        // let output_stream = ReceiverStream::new(rx);
+        // Ok(Response::new(output_stream as Self::consumeStream))
     }
 }

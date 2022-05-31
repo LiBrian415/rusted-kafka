@@ -4,35 +4,28 @@ use crate::{
     broker::ConsumerOutput, common::topic_partition::TopicPartition, zk::zk_client::KafkaZkClient,
 };
 
-use super::{kafka_client::KafkaClient, log_manager::LogManager};
+use super::{
+    kafka_client::KafkaClient,
+    replica_manager::{self, ReplicaManager},
+};
 
 pub struct ReplicaFetcherManager {
-    zkClient: Arc<KafkaZkClient>,
-    logManager: Arc<LogManager>,
+    replica_manager: Arc<ReplicaManager>,
 }
 
-async fn fetcherTask(
-    zkClient: Arc<KafkaZkClient>,
-    logManager: Arc<LogManager>,
-    topic: String,
-    partition: u32,
+async fn fetcher_task(
+    replica_manager: Arc<ReplicaManager>,
+    topic_partition: TopicPartition,
+    offset: u64,
 ) -> Result<(), Box<(dyn Error + Send + Sync)>> {
     // 1) get leader
-    let client = KafkaClient::new(format!("http://{}", "dummy"));
-
-    // get local log manager and current offset
-    let log = match logManager.get_log(&TopicPartition::init(topic.as_str(), partition)) {
-        Some(l) => l,
-        None => {
-            return Err(Box::<dyn Error + Send + Sync>::from(
-                "No log found for topic/partition",
-            ));
-        }
-    };
-    let offset = 0;
+    let leader_info = replica_manager.get_leader_info(&topic_partition)?;
+    let leader_client = KafkaClient::new(leader_info.hostname, leader_info.port);
 
     // 2) fetch from leader
-    let mut iter = client.consume(topic, partition, offset).await?;
+    let mut iter = leader_client
+        .consume(topic_partition.topic, topic_partition.partition, offset)
+        .await?;
     while let Some(res) = iter.message().await? {
         let ConsumerOutput { messages, end } = res;
         // 3) call log manager to append log
@@ -45,29 +38,29 @@ async fn fetcherTask(
 }
 
 impl ReplicaFetcherManager {
-    pub fn init(zkClient: Arc<KafkaZkClient>, logManager: Arc<LogManager>) -> Self {
-        return Self {
-            zkClient,
-            logManager,
-        };
+    pub fn init(replica_manager: Arc<ReplicaManager>) -> Self {
+        return Self { replica_manager };
     }
 
-    pub async fn fetch(&self, path: String) -> Result<(), Box<(dyn Error + Send + Sync)>> {
+    pub async fn fetch(
+        &self,
+        topic_partition: TopicPartition,
+        offset: u64,
+    ) -> Result<(), Box<(dyn Error + Send + Sync)>> {
         // TODO need code to make sure for a given topic/partition we don't create multiple threads to fetch
-        self.createFetcherThread("".to_owned(), 0).await?;
+        self.create_fetcher_thread(topic_partition, offset).await?;
         Ok(())
     }
 
-    async fn createFetcherThread(
+    async fn create_fetcher_thread(
         &self,
-        topic: String,
-        partition: u32,
+        topic_partition: TopicPartition,
+        offset: u64,
     ) -> Result<(), Box<(dyn Error + Send + Sync)>> {
-        let task = tokio::spawn(fetcherTask(
-            self.zkClient.clone(),
-            self.logManager.clone(),
-            topic,
-            partition,
+        let task = tokio::spawn(fetcher_task(
+            self.replica_manager.clone(),
+            topic_partition,
+            offset,
         ));
         task.await?;
         Ok(())
