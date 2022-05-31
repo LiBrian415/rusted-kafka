@@ -188,4 +188,24 @@ impl ControllerContext {
     pub fn remove_live_brokers(&self, broker_ids: Vec<u32>) {
         todo!();
     }
+
+    pub fn replicas_for_partition(
+        &self,
+        partitions: Vec<TopicPartition>,
+    ) -> HashSet<(TopicPartition, i32)> {
+        // return topicpartition, replica
+        todo!();
+    }
+
+    pub fn partitions_with_leaders(&self) -> HashSet<TopicPartition> {
+        todo!();
+    }
+
+    pub fn replicas_on_brokers(&self, broker_ids: HashSet<u32>) -> HashSet<(TopicPartition, i32)> {
+        todo!();
+    }
+
+    pub fn partitions_with_offline_leader(&self) -> HashSet<TopicPartition> {
+        todo!();
+    }
 }

@@ -21,6 +21,8 @@ use super::{
     },
     controller_events::ReplicaLeaderElection,
     event_manager::ControllerEventManager,
+    partition_state_machine::{NewPartition, OfflinePartition, OnlinePartition},
+    replica_state_machine::{NewReplica, OfflineReplica, OnlineReplica},
 };
 use crate::{
     common::topic_partition::TopicIdReplicaAssignment,
@@ -299,8 +301,17 @@ impl Controller {
             );
     }
 
-    fn process_replica_leader_election(&self, partition: HashSet<TopicPartition>) {
-        todo!();
+    fn process_replica_leader_election(&self, partitions: HashSet<TopicPartition>) {
+        if !self.is_active() {
+            return;
+        }
+
+        let all_partitions = self.context.borrow().all_partitions();
+        let mut known_partitions = partitions.clone();
+        known_partitions.retain(|p| all_partitions.contains(p));
+
+        // TODO: need to check
+        self.on_replica_election(known_partitions);
     }
     /***** Process Functions Entry Points for Events End *****/
     fn is_active(&self) -> bool {
@@ -596,19 +607,74 @@ impl Controller {
     }
 
     fn on_new_partition_creation(&self, new_partitions: HashSet<TopicPartition>) {
-        self.partition_state_machine.handle_state_change();
-        self.replica_state_machine.handle_state_change();
-        self.partition_state_machine.handle_state_change();
+        let partitions: Vec<TopicPartition> = new_partitions.iter().cloned().collect();
 
-        self.replica_state_machine.handle_state_change();
+        let context = self.context.borrow();
+        let replicas = context.replicas_for_partition(partitions);
+
+        self.partition_state_machine
+            .handle_state_change(new_partitions.clone(), Box::new(NewPartition {}));
+        self.replica_state_machine
+            .handle_state_change(replicas.clone(), Box::new(NewReplica {}));
+        self.partition_state_machine
+            .handle_state_change(new_partitions, Box::new(OnlinePartition {}));
+
+        self.replica_state_machine
+            .handle_state_change(replicas, Box::new(OnlineReplica {}));
     }
 
     fn on_broker_startup(&self, broker: Vec<u32>) {
-        todo!();
+        let context = self.context.borrow();
+
+        let broker_set: HashSet<u32> = broker.into_iter().collect();
+        let existing_brokers: HashSet<u32> = context
+            .live_or_shutting_down_broker_ids()
+            .difference(&broker_set)
+            .cloned()
+            .collect();
+
+        self.send_update_metadata_request(existing_brokers.into_iter().collect(), HashSet::new());
+        self.send_update_metadata_request(
+            broker_set.iter().cloned().collect(),
+            context.partitions_with_leaders(),
+        );
+
+        let all_replias_on_new_brokers = context.replicas_on_brokers(broker_set.clone());
+
+        self.replica_state_machine
+            .handle_state_change(all_replias_on_new_brokers, Box::new(OnlineReplica {}));
+
+        self.partition_state_machine
+            .trigger_online_partition_state_change();
+        self.register_broker_modification_handler(broker_set);
     }
 
-    fn on_broker_failure(&self, broker: Vec<u32>) {
-        todo!();
+    fn on_broker_failure(&self, brokers: Vec<u32>) {
+        let replicas = self
+            .context
+            .borrow()
+            .replicas_on_brokers(brokers.iter().cloned().collect());
+        self.on_replicas_become_offline(replicas);
+
+        self.unregister_broker_modification_handler(brokers.into_iter().collect());
+    }
+
+    fn on_replicas_become_offline(&self, replicas: HashSet<(TopicPartition, i32)>) {
+        let partitions_with_offline_leader = self.context.borrow().partitions_with_offline_leader();
+        self.partition_state_machine.handle_state_change(
+            partitions_with_offline_leader,
+            Box::new(OfflinePartition {}),
+        );
+
+        self.partition_state_machine
+            .trigger_online_partition_state_change();
+        self.replica_state_machine
+            .handle_state_change(replicas, Box::new(OfflineReplica {}));
+    }
+
+    fn on_replica_election(&self, partitions: HashSet<TopicPartition>) {
+        self.partition_state_machine
+            .handle_state_change(partitions, Box::new(OnlinePartition {}));
     }
 }
 

@@ -34,11 +34,12 @@ const GET_CHILDREN_REQUEST: u32 = 1;
 const EXIST_REQUEST: u32 = 2;
 
 impl KafkaZkClient {
-    pub fn init(
-        conn_str: &str,
-        sess_timeout: Duration,
-        handlers: KafkaZkHandlers,
-    ) -> ZkResult<KafkaZkClient> {
+    pub fn init(conn_str: &str, sess_timeout: Duration) -> ZkResult<KafkaZkClient> {
+        let handlers = KafkaZkHandlers {
+            change_handlers: Arc::new(RwLock::new(HashMap::new())),
+            child_change_handlers: Arc::new(RwLock::new(HashMap::new())),
+        };
+
         match ZooKeeper::connect(
             conn_str,
             sess_timeout,
@@ -982,11 +983,7 @@ mod client_tests {
     const SESS_TIMEOUT: Duration = Duration::from_secs(3);
 
     fn get_client() -> KafkaZkClient {
-        let handlers = KafkaZkHandlers {
-            change_handlers: Arc::new(RwLock::new(HashMap::new())),
-            child_change_handlers: Arc::new(RwLock::new(HashMap::new())),
-        };
-        let client = KafkaZkClient::init(CONN_STR, SESS_TIMEOUT, handlers);
+        let client = KafkaZkClient::init(CONN_STR, SESS_TIMEOUT);
         assert!(!client.is_err());
         client.unwrap()
     }
