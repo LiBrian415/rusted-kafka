@@ -16,7 +16,7 @@ pub struct ControllerContext {
     pub partitions_being_reassigned: HashSet<TopicPartition>,
     topic_ids: HashMap<String, u32>,   // topic name -> topic id
     topic_names: HashMap<u32, String>, // topic id -> topic name
-    partition_assignments: HashMap<String, HashMap<u32, ReplicaAssignment>>, // topic name -> partition # -> assignment
+    partition_assignments: HashMap<String, ReplicaAssignment>, // topic name -> assignment
     partition_leadership_info: HashMap<TopicPartition, (LeaderAndIsr, u128)>, // topicPartition -> (leaderAndIsr, epoch)
     // replica_states: HashMap<>,
     topics_to_be_deleted: HashSet<String>,
@@ -27,6 +27,12 @@ impl ControllerContext {
         todo!();
     }
 
+    pub fn live_broker_ids(&self) -> Vec<u32> {
+        let ids: HashSet<u32> = self.live_broker_epochs.keys().cloned().collect();
+        ids.difference(&self.shuttingdown_broker_ids)
+            .cloned()
+            .collect::<Vec<u32>>()
+    }
     pub fn live_or_shutting_down_broker_ids(&self) -> HashSet<u32> {
         HashSet::from_iter(self.live_broker_epochs.keys().map(|&id| id))
     }
@@ -74,11 +80,8 @@ impl ControllerContext {
 
     pub fn partition_replica_assignment(&self, partition: TopicPartition) -> Vec<u32> {
         match self.partition_assignments.get(&partition.topic) {
-            Some(partition_map) => match partition_map.get(&partition.partition) {
-                Some(replica_assignment) => match replica_assignment.partitions.get(&partition) {
-                    Some(replicas) => replicas.clone(),
-                    None => Vec::new(),
-                },
+            Some(partition_map) => match partition_map.partitions.get(&partition) {
+                Some(replicas) => replicas.clone(),
                 None => Vec::new(),
             },
             None => Vec::new(),
@@ -121,7 +124,7 @@ impl ControllerContext {
     ) {
         match self.partition_assignments.get_mut(&partition.topic) {
             Some(assignments) => {
-                *assignments.get_mut(&partition.partition).unwrap() = new_assignment;
+                *assignments = new_assignment;
                 // TODO: updatePreferredReplicaImbalanceMetric?
             }
             None => {}
@@ -135,11 +138,14 @@ impl ControllerContext {
     pub fn all_partitions(&self) -> Vec<TopicPartition> {
         let mut partitions: Vec<TopicPartition> = Vec::new();
         for topic in self.partition_assignments.keys() {
-            for partition in self.partition_assignments.get(topic).unwrap().keys() {
-                partitions.push(TopicPartition {
-                    topic: topic.to_string(),
-                    partition: *partition,
-                })
+            for partition in self
+                .partition_assignments
+                .get(topic)
+                .unwrap()
+                .partitions
+                .keys()
+            {
+                partitions.push(partition.clone());
             }
         }
 
@@ -177,35 +183,85 @@ impl ControllerContext {
         self.clear_live_brokers();
     }
 
-    pub fn clear_topic_state(&self) {
-        todo!();
+    pub fn clear_topic_state(&mut self) {
+        self.all_topics.clear();
+        self.topic_ids.clear();
+        self.topic_names.clear();
+        self.partition_assignments.clear();
+        self.partition_leadership_info.clear();
+        self.partitions_being_reassigned.clear();
     }
 
-    pub fn remove_topic(&self, topic: String) {
-        todo!();
-    }
+    // pub fn remove_topic(&self, topic: String) {
+    //     todo!();
+    // }
 
-    pub fn remove_live_brokers(&self, broker_ids: Vec<u32>) {
-        todo!();
+    pub fn remove_live_brokers(&mut self, broker_ids: Vec<u32>) {
+        self.live_brokers
+            .retain(|broker| !broker_ids.contains(&broker.id));
+        self.live_broker_epochs
+            .retain(|id, _| !broker_ids.contains(&id));
     }
 
     pub fn replicas_for_partition(
         &self,
         partitions: Vec<TopicPartition>,
-    ) -> HashSet<(TopicPartition, i32)> {
-        // return topicpartition, replica
-        todo!();
+    ) -> HashSet<(TopicPartition, u32)> {
+        // return TopicPartition, replica
+        let mut result_replicas: HashSet<(TopicPartition, u32)> = HashSet::new();
+        for partition in partitions {
+            let replica_assignment = self.partition_assignments.get(&partition.topic);
+            if replica_assignment.is_none() {
+                continue;
+            }
+
+            let assignment = replica_assignment.unwrap().clone().partitions;
+            let replicas = assignment.get(&partition);
+            if replicas.is_none() {
+                continue;
+            }
+
+            for replica in replicas.unwrap() {
+                result_replicas.insert((partition.clone(), replica.clone()));
+            }
+        }
+
+        result_replicas
     }
 
     pub fn partitions_with_leaders(&self) -> HashSet<TopicPartition> {
-        todo!();
+        self.partition_leadership_info.keys().cloned().collect()
     }
 
-    pub fn replicas_on_brokers(&self, broker_ids: HashSet<u32>) -> HashSet<(TopicPartition, i32)> {
-        todo!();
+    pub fn replicas_on_brokers(&self, broker_ids: HashSet<u32>) -> HashSet<(TopicPartition, u32)> {
+        let mut result_replicas: HashSet<(TopicPartition, u32)> = HashSet::new();
+        for id in broker_ids {
+            for (_, assignment) in self.partition_assignments.iter() {
+                for (partition, replicas) in assignment.partitions.iter() {
+                    for replica in replicas {
+                        if replica.clone() == id {
+                            result_replicas.insert((partition.clone(), replica.clone()));
+                        }
+                    }
+                }
+            }
+        }
+
+        result_replicas
     }
 
-    pub fn partitions_with_offline_leader(&self) -> HashSet<TopicPartition> {
-        todo!();
+    pub fn partitions_with_offline_leader(&mut self) -> HashSet<TopicPartition> {
+        let mut partition_leadership_info = self.partition_leadership_info.clone();
+        partition_leadership_info.retain(|partition, leader_and_isr| {
+            !self.is_replica_online(leader_and_isr.0.leader, partition.clone())
+        });
+
+        self.partition_leadership_info = partition_leadership_info.clone();
+
+        partition_leadership_info.keys().cloned().collect()
+    }
+
+    pub fn is_replica_online(&self, broker_id: u32, _partition: TopicPartition) -> bool {
+        self.live_broker_ids().contains(&broker_id)
     }
 }

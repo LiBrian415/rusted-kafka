@@ -16,7 +16,7 @@ use super::{
         EVENT_BROKER_CHANGE, EVENT_BROKER_MODIFICATION, EVENT_CONTROLLER_CHANGE,
         EVENT_CONTROLLER_SHUTDOWN, EVENT_ISR_CHANGE_NOTIFICATION,
         EVENT_LEADER_AND_ISR_RESPONSE_RECEIVED, EVENT_REGISTER_BROKER_AND_REELECT,
-        EVENT_REPLICA_LEADER_ELECTION, EVENT_RE_ELECT, EVENT_STARTUP, EVENT_TOPIC_CHNAGE,
+        EVENT_REPLICA_LEADER_ELECTION, EVENT_RE_ELECT, EVENT_STARTUP, EVENT_TOPIC_CHANGE,
         EVENT_UPDATE_METADATA_RESPONSE_RECEIVED,
     },
     controller_events::ReplicaLeaderElection,
@@ -83,7 +83,7 @@ impl Controller {
                     .unwrap()
                     .broker_id,
             ),
-            EVENT_TOPIC_CHNAGE => self.process_topic_change(),
+            EVENT_TOPIC_CHANGE => self.process_topic_change(),
             EVENT_REPLICA_LEADER_ELECTION => {
                 let partitions = event
                     .as_any()
@@ -231,9 +231,9 @@ impl Controller {
             }
         };
 
-        for topic in deleted_topics {
-            context.remove_topic(topic);
-        }
+        // for topic in deleted_topics {
+        //     context.remove_topic(topic);
+        // }
 
         let _: Vec<()> = added_partition_replica_assignment
             .iter()
@@ -659,8 +659,9 @@ impl Controller {
         self.unregister_broker_modification_handler(brokers.into_iter().collect());
     }
 
-    fn on_replicas_become_offline(&self, replicas: HashSet<(TopicPartition, i32)>) {
-        let partitions_with_offline_leader = self.context.borrow().partitions_with_offline_leader();
+    fn on_replicas_become_offline(&self, replicas: HashSet<(TopicPartition, u32)>) {
+        let partitions_with_offline_leader =
+            self.context.borrow_mut().partitions_with_offline_leader();
         self.partition_state_machine.handle_state_change(
             partitions_with_offline_leader,
             Box::new(OfflinePartition {}),

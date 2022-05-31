@@ -40,7 +40,7 @@ impl ReplicaStateMachine {
 
     pub fn handle_state_change(
         &self,
-        replicas: HashSet<(TopicPartition, i32)>,
+        replicas: HashSet<(TopicPartition, u32)>,
         target_state: Box<dyn ReplicaState>,
     ) {
         todo!();

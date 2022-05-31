@@ -5,7 +5,7 @@ use std::{any::Any, collections::HashSet};
 use super::constants::{
     EVENT_BROKER_CHANGE, EVENT_BROKER_MODIFICATION, EVENT_CONTROLLER_CHANGE,
     EVENT_ISR_CHANGE_NOTIFICATION, EVENT_REGISTER_BROKER_AND_REELECT,
-    EVENT_REPLICA_LEADER_ELECTION, EVENT_RE_ELECT, EVENT_STARTUP, EVENT_TOPIC_CHNAGE,
+    EVENT_REPLICA_LEADER_ELECTION, EVENT_RE_ELECT, EVENT_STARTUP, EVENT_TOPIC_CHANGE,
 };
 
 pub trait ControllerEvent: Send + Sync {
@@ -20,7 +20,7 @@ impl ControllerEvent for TopicChange {
     }
 
     fn state(&self) -> u32 {
-        EVENT_TOPIC_CHNAGE
+        EVENT_TOPIC_CHANGE
     }
 }
 
