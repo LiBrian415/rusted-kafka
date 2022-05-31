@@ -747,7 +747,7 @@ impl KafkaZkClient {
         &self,
         topic: &str,
         partition: u32,
-    ) -> ZkResult<Option<PartitionOffset>> {
+    ) -> ZkResult<Option<Vec<u8>>> {
         let path = TopicPartitionOffsetZNode::path(topic, partition);
         let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
             Ok(resp) => resp,
@@ -761,7 +761,7 @@ impl KafkaZkClient {
             false => self.client.get_data(path.as_str(), false),
         };
         match result {
-            Ok(resp) => Ok(Some(TopicPartitionOffsetZNode::decode(&resp.0))),
+            Ok(resp) => Ok(Some(resp.0)),
             Err(e) => match e {
                 ZkError::NoNode => Ok(None),
                 _ => Err(e),
