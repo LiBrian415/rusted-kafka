@@ -11,7 +11,8 @@ pub struct KafkaClient {
 }
 
 impl KafkaClient {
-    pub fn new(addr: String) -> Self {
+    pub fn new(host: String, port: String) -> Self {
+        let addr = format!("http://{}:{}", host, port);
         Self {
             addr,
             client: Mutex::new(None),

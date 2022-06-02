@@ -24,7 +24,33 @@ pub struct ControllerContext {
 
 impl ControllerContext {
     pub fn init() -> ControllerContext {
-        todo!();
+        let shuttingdown_broker_ids = HashSet::new();
+        let live_brokers = HashSet::new();
+        let live_broker_epochs = HashMap::new();
+        let epoch = 0;
+        let epoch_zk_version = 0;
+        let all_topics = HashSet::new();
+        let partitions_being_reassigned = HashSet::new();
+        let topic_ids = HashMap::new();
+        let topic_names = HashMap::new();
+        let partition_assignments = HashMap::new();
+        let partition_leadership_info = HashMap::new();
+        let topics_to_be_deleted = HashSet::new();
+
+        Self {
+            shuttingdown_broker_ids,
+            live_brokers,
+            live_broker_epochs,
+            epoch,
+            epoch_zk_version,
+            all_topics,
+            partitions_being_reassigned,
+            topic_ids,
+            topic_names,
+            partition_assignments,
+            partition_leadership_info,
+            topics_to_be_deleted,
+        }
     }
 
     pub fn live_broker_ids(&self) -> Vec<u32> {

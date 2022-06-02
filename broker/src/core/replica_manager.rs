@@ -154,11 +154,11 @@ impl ReplicaManager {
         // 2)
 
         // 3)
-        self.log_manager
-            .get_or_create_log(&topic_partition)
-            .truncate();
+        let log = self.log_manager.get_or_create_log(&topic_partition);
+        log.truncate();
 
         // 4)
+        let local_offset = log.get_log_end();
 
         // 5)
         Ok(())
@@ -254,6 +254,13 @@ impl ReplicaManager {
                     notify.notified().await;
                 } else {
                     let _ = self.append_local(&topic_partition, messages)?;
+
+                    // Send notification
+                    let _ = self.zk_client.set_topic_partition_offset(
+                        &topic_partition.topic,
+                        topic_partition.partition,
+                        None,
+                    )?;
                 }
 
                 Ok(())

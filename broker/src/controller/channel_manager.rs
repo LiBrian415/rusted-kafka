@@ -1,12 +1,23 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::RwLock};
 
-use crate::{common::broker::BrokerInfo, controller::controller_context::ControllerContext};
+use tokio::sync::Mutex;
+
+use crate::{
+    common::broker::BrokerInfo, controller::controller_context::ControllerContext,
+    core::kafka_client::KafkaClient,
+};
 
 use super::event_manager::ControllerEventManager;
+
+pub struct BrokerClient {
+    broker_info: BrokerInfo,
+    broker_client: KafkaClient,
+}
 
 // A structure responsible for managing the active broker connections
 pub struct ControllerChannelManager {
     context: Rc<RefCell<ControllerContext>>,
+    brokers: RwLock<HashMap<u32, BrokerClient>>,
 }
 
 // A structure responsible for sending controller requests
@@ -18,7 +29,10 @@ pub struct ControllerBrokerRequestBatch {
 
 impl ControllerChannelManager {
     pub fn init(context: Rc<RefCell<ControllerContext>>) -> ControllerChannelManager {
-        todo!();
+        Self {
+            context,
+            brokers: RwLock::new(HashMap::new()),
+        }
     }
 
     pub fn startup(&self) {
@@ -29,20 +43,33 @@ impl ControllerChannelManager {
         todo!();
     }
 
-    fn add_new_broker(&self, broker: BrokerInfo) {
-        // add a new broker to the managed broker set
-        todo!();
-    }
-
     pub fn remove_broker(&self, broker_id: u32) {
-        todo!();
+        let mut w = self.brokers.write().unwrap();
+        w.remove(&broker_id);
     }
 
-    pub fn add_broker(&self, broker: BrokerInfo) {
-        todo!();
+    pub fn add_broker(&self, broker_info: BrokerInfo) {
+        let BrokerInfo {
+            hostname,
+            port,
+            id: _,
+        } = broker_info.clone();
+        let broker_client = KafkaClient::new(hostname, port);
+
+        let mut w = self.brokers.write().unwrap();
+        (*w).insert(
+            broker_info.id,
+            BrokerClient {
+                broker_info,
+                broker_client,
+            },
+        );
     }
 
-    pub fn send_request() {
+    pub fn send_request(&self) {
+        let dummy_id = 0;
+        let r = self.brokers.read().unwrap();
+        let client = r.get(&dummy_id);
         todo!();
     }
 }

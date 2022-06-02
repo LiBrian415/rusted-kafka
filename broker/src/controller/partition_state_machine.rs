@@ -14,20 +14,26 @@ const OFFLINE_PARTITION: u32 = 2;
 pub struct PartitionStateMachine {
     broker_id: u32,
     context: Rc<RefCell<ControllerContext>>,
-    zkClient: Arc<KafkaZkClient>,
+    zk_client: Arc<KafkaZkClient>,
     channel_manager: Rc<RefCell<ControllerChannelManager>>,
     event_manager: ControllerEventManager,
 }
 
 impl PartitionStateMachine {
     pub fn init(
-        id: u32,
+        broker_id: u32,
         context: Rc<RefCell<ControllerContext>>,
-        client: Arc<KafkaZkClient>,
+        zk_client: Arc<KafkaZkClient>,
         channel_manager: Rc<RefCell<ControllerChannelManager>>,
         event_manager: ControllerEventManager,
     ) -> PartitionStateMachine {
-        todo!();
+        Self {
+            broker_id,
+            context,
+            zk_client,
+            channel_manager,
+            event_manager,
+        }
     }
     pub fn startup(&self) {
         todo!();
