@@ -525,6 +525,23 @@ impl KafkaZkClient {
     }
     // Topic + Partition
 
+    pub fn create_new_topic(&self, topics: Vec<String>) -> ZkResult<()> {
+        for topic in topics.iter() {
+            let path = TopicZNode::path(topic);
+            match self.client.create(
+                path.as_str(),
+                Vec::new(),
+                Acl::open_unsafe().clone(),
+                CreateMode::Persistent,
+            ) {
+                Ok(_) => {}
+                Err(e) => return Err(e),
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn get_all_topics(&self, register_watch: bool) -> ZkResult<HashSet<String>> {
         let path = TopicsZNode::path();
         let watch = match self.should_watch(path.to_string(), GET_CHILDREN_REQUEST, register_watch)
