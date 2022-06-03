@@ -251,6 +251,7 @@ impl Controller {
             })
             .collect();
 
+        std::mem::drop(context);
         let mut partitions = HashSet::new();
         if !added_partition_replica_assignment.is_empty() {
             let _: Vec<()> = added_partition_replica_assignment
@@ -607,6 +608,7 @@ impl Controller {
 
         let context = self.context.borrow();
         let replicas = context.replicas_for_partition(partitions);
+        std::mem::drop(context);
 
         self.partition_state_machine
             .handle_state_change(new_partitions.clone(), Arc::new(NewPartition {}));

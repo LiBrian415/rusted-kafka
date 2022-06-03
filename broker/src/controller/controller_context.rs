@@ -314,6 +314,19 @@ impl ControllerContext {
         }
     }
 
+    pub fn put_partition_state_if_not_exists(
+        &mut self,
+        partition: TopicPartition,
+        state: Arc<dyn PartitionState>,
+    ) {
+        match self.partition_states.get_mut(&partition) {
+            Some(old_state) => *old_state = state,
+            None => {
+                self.partition_states.insert(partition, state);
+            }
+        }
+    }
+
     pub fn get_partitions(&self, states: Vec<u32>) -> HashSet<TopicPartition> {
         let mut results = HashSet::new();
         for (partition, state) in self.partition_states.iter() {

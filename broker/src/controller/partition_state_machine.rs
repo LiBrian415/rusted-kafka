@@ -100,6 +100,15 @@ impl PartitionStateMachine {
         target_state: Arc<dyn PartitionState>,
     ) -> HashMap<TopicPartition, LeaderAndIsr> {
         let mut context = self.context.borrow_mut();
+        let _: Vec<()> = partitions
+            .iter()
+            .map(|partition| {
+                context.put_partition_state_if_not_exists(
+                    partition.clone(),
+                    Arc::new(NonExistentPartition {}),
+                );
+            })
+            .collect();
         let valid_partitions =
             context.check_valid_partition_state_change(partitions, target_state.clone());
 
@@ -285,5 +294,16 @@ impl PartitionState for OfflinePartition {
 
     fn valid_previous_state(&self) -> Vec<u32> {
         vec![NEW_PARTITION, ONLINE_PARTITION, OFFLINE_PARTITION]
+    }
+}
+
+pub struct NonExistentPartition {}
+impl PartitionState for NonExistentPartition {
+    fn state(&self) -> u32 {
+        NON_EXISTENT_PARTITION
+    }
+
+    fn valid_previous_state(&self) -> Vec<u32> {
+        vec![OFFLINE_PARTITION]
     }
 }
