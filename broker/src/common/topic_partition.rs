@@ -1,10 +1,6 @@
-use std::{collections::HashMap, fmt};
+use std::collections::HashMap;
 
-use serde::{
-    de::{MapAccess, SeqAccess, Visitor},
-    ser::SerializeMap,
-    Deserialize, Serialize, Serializer,
-};
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Eq, PartialEq, Hash, Clone)]
 pub struct TopicPartition {
