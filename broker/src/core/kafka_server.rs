@@ -14,9 +14,13 @@ use tonic::{transport::Server, Response, Status};
 use crate::{
     broker::{
         broker_server::{Broker, BrokerServer},
-        ConsumerInput, ConsumerOutput, CreateInput, ProducerInput, Void,
+        ConsumerInput, ConsumerOutput, CreateInput, LeaderAndIsr as RpcLeaderAndIsr, ProducerInput,
+        TopicPartition as RpcTopicPartition, TopicPartitionLeaderInput, Void,
     },
-    common::{broker::BrokerInfo, topic_partition::TopicPartition},
+    common::{
+        broker::BrokerInfo,
+        topic_partition::{LeaderAndIsr, TopicPartition},
+    },
     controller::controller_worker::ControllerWorker,
     zk::{zk_client::KafkaZkClient, zk_watcher::KafkaZkHandlers},
 };
@@ -81,15 +85,17 @@ impl KafkaServer {
         zk_client.cleanup();
         zk_client.create_top_level_paths();
 
+        let broker_id = this as u32;
+
         // Start controller
-        let broker_info = BrokerInfo::init(addrs[this].as_str(), "7777", this as u32);
+        let broker_info = BrokerInfo::init(addrs[this].as_str(), "7777", broker_id);
         let broker_epoch = 0;
         let controller = ControllerWorker::startup(zk_client.clone(), broker_info, broker_epoch);
         controller.activate().await;
 
         let log_manager = Arc::new(LogManager::init());
         let replica_manager = Arc::new(ReplicaManager::init(
-            0,
+            broker_id,
             None,
             log_manager,
             zk_client.clone(),
@@ -124,6 +130,43 @@ impl KafkaServer {
 #[async_trait]
 impl Broker for BrokerStream {
     type consumeStream = tokio_stream::wrappers::ReceiverStream<Result<ConsumerOutput, Status>>;
+
+    async fn topic_partition_leader(
+        &self,
+        request: tonic::Request<TopicPartitionLeaderInput>,
+    ) -> Result<tonic::Response<Void>, tonic::Status> {
+        let TopicPartitionLeaderInput {
+            topic_partition,
+            leader_and_isr,
+        } = request.into_inner();
+
+        let RpcTopicPartition { topic, partition } = match topic_partition {
+            Some(tp) => tp,
+            None => return Err(tonic::Status::invalid_argument("Missing TopicPartition")),
+        };
+        let RpcLeaderAndIsr {
+            leader,
+            isr,
+            leader_epoch,
+            controller_epoch,
+        } = match leader_and_isr {
+            Some(lisr) => lisr,
+            None => return Err(tonic::Status::invalid_argument("Missing LeaderAndIsr")),
+        };
+
+        match self.replica_manager.become_leader_or_follower(
+            TopicPartition { topic, partition },
+            LeaderAndIsr {
+                leader,
+                isr,
+                leader_epoch: leader_epoch as u128,
+                controller_epoch: controller_epoch as u128,
+            },
+        ) {
+            Ok(()) => Ok(Response::new(Void {})),
+            Err(e) => Err(tonic::Status::unknown(e.to_string())),
+        }
+    }
 
     async fn create(
         &self,

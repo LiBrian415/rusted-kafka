@@ -164,6 +164,18 @@ impl ReplicaManager {
         Ok(())
     }
 
+    pub fn become_leader_or_follower(
+        &self,
+        topic_partition: TopicPartition,
+        leader_and_isr: LeaderAndIsr,
+    ) -> ReplicaResult<()> {
+        if self.broker_id == leader_and_isr.leader {
+            self.make_leader(topic_partition, leader_and_isr)
+        } else {
+            self.make_follower(topic_partition, leader_and_isr)
+        }
+    }
+
     pub fn update_controller_epoch(&self, controller_epoch: i32) {
         let mut w = self.controller_epoch.write().unwrap();
         if let Some(epoch) = *w {
