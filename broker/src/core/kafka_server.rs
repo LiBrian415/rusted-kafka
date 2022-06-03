@@ -85,7 +85,7 @@ impl KafkaServer {
         let broker_info = BrokerInfo::init(addrs[this].as_str(), "7777", this as u32);
         let broker_epoch = 0;
         let controller = ControllerWorker::startup(zk_client.clone(), broker_info, broker_epoch);
-        controller.activate();
+        controller.activate().await;
 
         let log_manager = Arc::new(LogManager::init());
         let replica_manager = Arc::new(ReplicaManager::init(
@@ -153,8 +153,6 @@ impl Broker for BrokerStream {
         } = request.into_inner();
 
         let tp = TopicPartition::init(topic.as_str(), partition);
-
-        // self.replica_manager.make_leader(tp, leader_and_isr);
 
         match self.replica_manager.append_messages(-1, tp, messages).await {
             Ok(()) => Ok(Response::new(Void {})),

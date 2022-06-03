@@ -72,7 +72,10 @@ impl Controller {
     // process functions for different events
     pub fn process(&self, event: Box<dyn ControllerEvent>) {
         match event.state() {
-            EVENT_STARTUP => self.process_startup(),
+            EVENT_STARTUP => {
+                self.process_startup();
+                event.complete();
+            }
             EVENT_CONTROLLER_CHANGE => self.process_controller_change(),
             EVENT_RE_ELECT => self.process_re_elect(),
             EVENT_BROKER_CHANGE => self.process_broker_change(),
