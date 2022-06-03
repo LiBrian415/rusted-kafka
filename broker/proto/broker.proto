@@ -55,7 +55,7 @@ message ConsumerOutput {
 }
 
 service Broker {
-  rpc topic_partition_leader(TopicPartitionLeaderInput) returns (Void);
+  rpc set_topic_partition_leader(TopicPartitionLeaderInput) returns (Void);
   rpc create(CreateInput) returns (Void);
   rpc produce(ProducerInput) returns (Void);
   rpc consume(ConsumerInput) returns (stream ConsumerOutput);

@@ -1,5 +1,8 @@
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Void {}
+/// Data structure for normal topic/partition
+/// topic - topic
+/// partition - partition number
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TopicPartition {
     #[prost(string, tag = "1")]
@@ -125,7 +128,7 @@ pub mod broker_client {
             self.inner = self.inner.accept_gzip();
             self
         }
-        pub async fn topic_partition_leader(
+        pub async fn set_topic_partition_leader(
             &mut self,
             request: impl tonic::IntoRequest<super::TopicPartitionLeaderInput>,
         ) -> Result<tonic::Response<super::Void>, tonic::Status> {
@@ -137,7 +140,7 @@ pub mod broker_client {
             })?;
             let codec = tonic::codec::ProstCodec::default();
             let path =
-                http::uri::PathAndQuery::from_static("/broker.Broker/topic_partition_leader");
+                http::uri::PathAndQuery::from_static("/broker.Broker/set_topic_partition_leader");
             self.inner.unary(request.into_request(), path, codec).await
         }
         pub async fn create(
@@ -194,7 +197,7 @@ pub mod broker_server {
     #[doc = "Generated trait containing gRPC methods that should be implemented for use with BrokerServer."]
     #[async_trait]
     pub trait Broker: Send + Sync + 'static {
-        async fn topic_partition_leader(
+        async fn set_topic_partition_leader(
             &self,
             request: tonic::Request<super::TopicPartitionLeaderInput>,
         ) -> Result<tonic::Response<super::Void>, tonic::Status>;
@@ -254,11 +257,11 @@ pub mod broker_server {
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             let inner = self.inner.clone();
             match req.uri().path() {
-                "/broker.Broker/topic_partition_leader" => {
+                "/broker.Broker/set_topic_partition_leader" => {
                     #[allow(non_camel_case_types)]
-                    struct topic_partition_leaderSvc<T: Broker>(pub Arc<T>);
+                    struct set_topic_partition_leaderSvc<T: Broker>(pub Arc<T>);
                     impl<T: Broker> tonic::server::UnaryService<super::TopicPartitionLeaderInput>
-                        for topic_partition_leaderSvc<T>
+                        for set_topic_partition_leaderSvc<T>
                     {
                         type Response = super::Void;
                         type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
@@ -267,7 +270,8 @@ pub mod broker_server {
                             request: tonic::Request<super::TopicPartitionLeaderInput>,
                         ) -> Self::Future {
                             let inner = self.0.clone();
-                            let fut = async move { (*inner).topic_partition_leader(request).await };
+                            let fut =
+                                async move { (*inner).set_topic_partition_leader(request).await };
                             Box::pin(fut)
                         }
                     }
@@ -276,7 +280,7 @@ pub mod broker_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let inner = inner.0;
-                        let method = topic_partition_leaderSvc(inner);
+                        let method = set_topic_partition_leaderSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec).apply_compression_config(
                             accept_compression_encodings,

@@ -52,7 +52,7 @@ impl KafkaClient {
             controller_epoch,
         } = leader_and_isr;
         client
-            .topic_partition_leader(TopicPartitionLeaderInput {
+            .set_topic_partition_leader(TopicPartitionLeaderInput {
                 topic_partition: Some(RpcTopicPartition { topic, partition }),
                 leader_and_isr: Some(RpcLeaderAndIsr {
                     leader,

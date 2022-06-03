@@ -131,7 +131,7 @@ impl KafkaServer {
 impl Broker for BrokerStream {
     type consumeStream = tokio_stream::wrappers::ReceiverStream<Result<ConsumerOutput, Status>>;
 
-    async fn topic_partition_leader(
+    async fn set_topic_partition_leader(
         &self,
         request: tonic::Request<TopicPartitionLeaderInput>,
     ) -> Result<tonic::Response<Void>, tonic::Status> {
