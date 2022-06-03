@@ -5,8 +5,13 @@ package broker;
 message Void {
 }
 
+message TopicPartitions {
+  string topic = 1;
+  uint32 partitions = 2;
+}
+
 message CreateInput {
-  repeated string topics = 1;
+  repeated TopicPartitions topic_partitions = 1;
 }
 
 message ProducerInput {

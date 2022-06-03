@@ -4,7 +4,8 @@ use tokio::sync::Mutex;
 use tonic::{transport::Channel, Streaming};
 
 use crate::broker::{
-    broker_client::BrokerClient, ConsumerInput, ConsumerOutput, CreateInput, ProducerInput, Void,
+    broker_client::BrokerClient, ConsumerInput, ConsumerOutput, CreateInput, ProducerInput,
+    TopicPartitions, Void,
 };
 
 pub struct KafkaClient {
@@ -33,9 +34,19 @@ impl KafkaClient {
         }
     }
 
-    pub async fn create(&self, topics: Vec<String>) -> Result<(), Box<(dyn Error + Send + Sync)>> {
+    pub async fn create(
+        &self,
+        topic_partitions: Vec<(String, u32)>,
+    ) -> Result<(), Box<(dyn Error + Send + Sync)>> {
         let mut client = self.connect().await?;
-        client.create(CreateInput { topics }).await?;
+        let topic_partitions = topic_partitions
+            .iter()
+            .map(|(topic, partitions)| TopicPartitions {
+                topic: topic.to_owned(),
+                partitions: partitions.to_owned(),
+            })
+            .collect();
+        client.create(CreateInput { topic_partitions }).await?;
         Ok(())
     }
 

@@ -1,9 +1,16 @@
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Void {}
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TopicPartitions {
+    #[prost(string, tag = "1")]
+    pub topic: ::prost::alloc::string::String,
+    #[prost(uint32, tag = "2")]
+    pub partitions: u32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct CreateInput {
-    #[prost(string, repeated, tag = "1")]
-    pub topics: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(message, repeated, tag = "1")]
+    pub topic_partitions: ::prost::alloc::vec::Vec<TopicPartitions>,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ProducerInput {

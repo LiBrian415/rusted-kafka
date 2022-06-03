@@ -129,23 +129,15 @@ impl Broker for BrokerStream {
         &self,
         request: tonic::Request<CreateInput>,
     ) -> Result<tonic::Response<Void>, tonic::Status> {
-        let CreateInput { topics } = request.into_inner();
+        let CreateInput { topic_partitions } = request.into_inner();
 
-        match self.zk_client.create_new_topic(topics.clone()) {
-            Ok(()) => match self.zk_client.get_partitions_for_topics(topics.clone()) {
-                Ok(topic_partitions) => {
-                    for topic in topics {
-                        if let Some(partitions) = topic_partitions.get(&topic) {
-                            for partition in partitions {
-                                let tp = TopicPartition::init(&topic, partition.to_owned());
-                                // self.replica_manager.make_leader(tp, leader_and_isr);
-                            }
-                        }
-                    }
-                    Ok(Response::new(Void {}))
-                }
-                Err(e) => Err(tonic::Status::unknown(e.to_string())),
-            },
+        let topic_partitions: Vec<(String, u32)> = topic_partitions
+            .iter()
+            .map(|tp| (tp.topic.clone(), tp.partitions))
+            .collect();
+
+        match self.zk_client.create_new_topic(topic_partitions) {
+            Ok(()) => Ok(Response::new(Void {})),
             Err(e) => Err(tonic::Status::unknown(e.to_string())),
         }
     }
