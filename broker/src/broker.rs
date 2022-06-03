@@ -1,5 +1,36 @@
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Void {}
+/// Data structure for normal topic/partition
+/// topic - topic
+/// partition - partition number
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TopicPartition {
+    #[prost(string, tag = "1")]
+    pub topic: ::prost::alloc::string::String,
+    #[prost(uint32, tag = "2")]
+    pub partition: u32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct LeaderAndIsr {
+    #[prost(uint32, tag = "1")]
+    pub leader: u32,
+    #[prost(uint32, repeated, tag = "2")]
+    pub isr: ::prost::alloc::vec::Vec<u32>,
+    #[prost(uint64, tag = "3")]
+    pub leader_epoch: u64,
+    #[prost(uint64, tag = "4")]
+    pub controller_epoch: u64,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TopicPartitionLeaderInput {
+    #[prost(message, optional, tag = "1")]
+    pub topic_partition: ::core::option::Option<TopicPartition>,
+    #[prost(message, optional, tag = "2")]
+    pub leader_and_isr: ::core::option::Option<LeaderAndIsr>,
+}
+/// Data structure for create topic/partitions
+/// topic - topic
+/// partitions - number of partitions
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TopicPartitions {
     #[prost(string, tag = "1")]
@@ -97,6 +128,21 @@ pub mod broker_client {
             self.inner = self.inner.accept_gzip();
             self
         }
+        pub async fn set_topic_partition_leader(
+            &mut self,
+            request: impl tonic::IntoRequest<super::TopicPartitionLeaderInput>,
+        ) -> Result<tonic::Response<super::Void>, tonic::Status> {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path =
+                http::uri::PathAndQuery::from_static("/broker.Broker/set_topic_partition_leader");
+            self.inner.unary(request.into_request(), path, codec).await
+        }
         pub async fn create(
             &mut self,
             request: impl tonic::IntoRequest<super::CreateInput>,
@@ -151,6 +197,10 @@ pub mod broker_server {
     #[doc = "Generated trait containing gRPC methods that should be implemented for use with BrokerServer."]
     #[async_trait]
     pub trait Broker: Send + Sync + 'static {
+        async fn set_topic_partition_leader(
+            &self,
+            request: tonic::Request<super::TopicPartitionLeaderInput>,
+        ) -> Result<tonic::Response<super::Void>, tonic::Status>;
         async fn create(
             &self,
             request: tonic::Request<super::CreateInput>,
@@ -207,6 +257,40 @@ pub mod broker_server {
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             let inner = self.inner.clone();
             match req.uri().path() {
+                "/broker.Broker/set_topic_partition_leader" => {
+                    #[allow(non_camel_case_types)]
+                    struct set_topic_partition_leaderSvc<T: Broker>(pub Arc<T>);
+                    impl<T: Broker> tonic::server::UnaryService<super::TopicPartitionLeaderInput>
+                        for set_topic_partition_leaderSvc<T>
+                    {
+                        type Response = super::Void;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::TopicPartitionLeaderInput>,
+                        ) -> Self::Future {
+                            let inner = self.0.clone();
+                            let fut =
+                                async move { (*inner).set_topic_partition_leader(request).await };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = set_topic_partition_leaderSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec).apply_compression_config(
+                            accept_compression_encodings,
+                            send_compression_encodings,
+                        );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 "/broker.Broker/create" => {
                     #[allow(non_camel_case_types)]
                     struct createSvc<T: Broker>(pub Arc<T>);

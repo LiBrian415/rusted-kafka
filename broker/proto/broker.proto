@@ -5,6 +5,29 @@ package broker;
 message Void {
 }
 
+// Data structure for normal topic/partition
+// topic - topic
+// partition - partition number
+message TopicPartition {
+  string topic = 1;
+  uint32 partition = 2;
+}
+
+message LeaderAndIsr {
+  uint32 leader = 1;
+  repeated uint32 isr = 2;
+  uint64 leader_epoch = 3;
+  uint64 controller_epoch = 4;
+}
+
+message TopicPartitionLeaderInput {
+  TopicPartition topic_partition = 1;
+  LeaderAndIsr leader_and_isr = 2;
+}
+
+// Data structure for create topic/partitions
+// topic - topic
+// partitions - number of partitions
 message TopicPartitions {
   string topic = 1;
   uint32 partitions = 2;
@@ -32,6 +55,7 @@ message ConsumerOutput {
 }
 
 service Broker {
+  rpc set_topic_partition_leader(TopicPartitionLeaderInput) returns (Void);
   rpc create(CreateInput) returns (Void);
   rpc produce(ProducerInput) returns (Void);
   rpc consume(ConsumerInput) returns (stream ConsumerOutput);
