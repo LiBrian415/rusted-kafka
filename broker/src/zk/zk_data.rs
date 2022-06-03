@@ -1,3 +1,4 @@
+use bincode;
 use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
@@ -106,11 +107,11 @@ impl TopicZNode {
     }
 
     pub fn encode(replica_assignment: ReplicaAssignment) -> Vec<u8> {
-        serde_json::to_vec(&replica_assignment).unwrap()
+        bincode::serialize(&replica_assignment).unwrap()
     }
 
     pub fn decode(data: &Vec<u8>) -> ReplicaAssignment {
-        serde_json::from_slice::<ReplicaAssignment>(data).unwrap()
+        bincode::deserialize::<ReplicaAssignment>(data).unwrap()
     }
 
     pub fn decode_with_topic(topic: String, data: &Vec<u8>) -> TopicIdReplicaAssignment {
