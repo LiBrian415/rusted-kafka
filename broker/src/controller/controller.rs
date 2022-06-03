@@ -26,7 +26,7 @@ use super::{
     replica_state_machine::{NewReplica, OfflineReplica, OnlineReplica},
 };
 use crate::{
-    common::topic_partition::TopicIdReplicaAssignment,
+    common::topic_partition::{PartitionReplica, TopicIdReplicaAssignment},
     controller::controller_context::ControllerContext,
 };
 use crate::{
@@ -660,7 +660,7 @@ impl Controller {
         self.unregister_broker_modification_handler(brokers.into_iter().collect());
     }
 
-    fn on_replicas_become_offline(&self, replicas: HashSet<(TopicPartition, u32)>) {
+    fn on_replicas_become_offline(&self, replicas: HashSet<PartitionReplica>) {
         let partitions_with_offline_leader =
             self.context.borrow_mut().partitions_with_offline_leader();
         self.partition_state_machine.handle_state_change(

@@ -240,9 +240,9 @@ impl ControllerContext {
     pub fn replicas_for_partition(
         &self,
         partitions: Vec<TopicPartition>,
-    ) -> HashSet<(TopicPartition, u32)> {
+    ) -> HashSet<PartitionReplica> {
         // return TopicPartition, replica
-        let mut result_replicas: HashSet<(TopicPartition, u32)> = HashSet::new();
+        let mut result_replicas: HashSet<PartitionReplica> = HashSet::new();
         for partition in partitions {
             let replica_assignment = self.partition_assignments.get(&partition.topic);
             if replica_assignment.is_none() {
@@ -256,7 +256,7 @@ impl ControllerContext {
             }
 
             for replica in replicas.unwrap() {
-                result_replicas.insert((partition.clone(), replica.clone()));
+                result_replicas.insert(PartitionReplica::init(partition.clone(), replica.clone()));
             }
         }
 
@@ -267,14 +267,15 @@ impl ControllerContext {
         self.partition_leadership_info.keys().cloned().collect()
     }
 
-    pub fn replicas_on_brokers(&self, broker_ids: HashSet<u32>) -> HashSet<(TopicPartition, u32)> {
-        let mut result_replicas: HashSet<(TopicPartition, u32)> = HashSet::new();
+    pub fn replicas_on_brokers(&self, broker_ids: HashSet<u32>) -> HashSet<PartitionReplica> {
+        let mut result_replicas: HashSet<PartitionReplica> = HashSet::new();
         for id in broker_ids {
             for (_, assignment) in self.partition_assignments.iter() {
                 for (partition, replicas) in assignment.partitions.iter() {
                     for replica in replicas {
                         if replica.clone() == id {
-                            result_replicas.insert((partition.clone(), replica.clone()));
+                            result_replicas
+                                .insert(PartitionReplica::init(partition.clone(), replica.clone()));
                         }
                     }
                 }
@@ -358,14 +359,66 @@ impl ControllerContext {
 
     pub fn online_and_offline_replicas(
         &self,
-    ) -> (
-        HashSet<(TopicPartition, u32)>,
-        HashSet<(TopicPartition, u32)>,
-    ) {
-        todo!();
+    ) -> (HashSet<PartitionReplica>, HashSet<PartitionReplica>) {
+        let mut online_replicas = HashSet::new();
+        let mut offline_replicas = HashSet::new();
+
+        for (_, replica_assignment) in self.partition_assignments.iter() {
+            for (partition, replicas) in replica_assignment.partitions.iter() {
+                for replica in replicas {
+                    if self.is_replica_online(replica.clone(), partition.clone()) {
+                        online_replicas
+                            .insert(PartitionReplica::init(partition.clone(), replica.clone()));
+                    } else {
+                        offline_replicas
+                            .insert(PartitionReplica::init(partition.clone(), replica.clone()));
+                    }
+                }
+            }
+        }
+
+        (online_replicas, offline_replicas)
     }
 
     pub fn put_replica_state(&mut self, replica: PartitionReplica, state: Arc<dyn ReplicaState>) {
-        self.replica_states.insert(replica, state);
+        match self.replica_states.get_mut(&replica) {
+            Some(entry) => {
+                *entry = state;
+            }
+            None => {
+                self.replica_states.insert(replica, state);
+            }
+        }
+    }
+
+    pub fn check_valid_replica_state_change(
+        &self,
+        replicas: HashSet<PartitionReplica>,
+        target_state: Arc<dyn ReplicaState>,
+    ) -> Vec<PartitionReplica> {
+        let mut valids = Vec::new();
+        for replica in replicas.iter() {
+            if target_state
+                .valid_previous_state()
+                .contains(&self.replica_states.get(replica).unwrap().state())
+            {
+                valids.push(replica.clone());
+            }
+        }
+
+        valids
+    }
+
+    pub fn put_replica_state_if_not_exists(
+        &mut self,
+        replica: PartitionReplica,
+        state: Arc<dyn ReplicaState>,
+    ) {
+        match self.replica_states.get_mut(&replica) {
+            Some(old_state) => *old_state = state,
+            None => {
+                self.replica_states.insert(replica, state);
+            }
+        }
     }
 }

@@ -11,8 +11,10 @@ use crate::{
 };
 
 use super::{
-    channel_manager::ControllerChannelManager, constants::INITIAL_PARTITION_EPOCH,
-    controller_context::ControllerContext, event_manager::ControllerEventManager,
+    channel_manager::{ControllerBrokerRequestBatch, ControllerChannelManager},
+    constants::INITIAL_PARTITION_EPOCH,
+    controller_context::ControllerContext,
+    event_manager::ControllerEventManager,
 };
 
 const NEW_PARTITION: u32 = 0;
@@ -26,6 +28,7 @@ pub struct PartitionStateMachine {
     zk_client: Arc<KafkaZkClient>,
     channel_manager: Rc<RefCell<ControllerChannelManager>>,
     event_manager: ControllerEventManager,
+    request_batch: RefCell<ControllerBrokerRequestBatch>,
 }
 
 impl PartitionStateMachine {
@@ -36,12 +39,18 @@ impl PartitionStateMachine {
         channel_manager: Rc<RefCell<ControllerChannelManager>>,
         event_manager: ControllerEventManager,
     ) -> PartitionStateMachine {
+        let request_batch = RefCell::new(ControllerBrokerRequestBatch::init(
+            channel_manager.clone(),
+            broker_id,
+            event_manager.clone(),
+        ));
         Self {
             broker_id,
             context,
             zk_client,
             channel_manager,
             event_manager,
+            request_batch,
         }
     }
     pub fn startup(&self) {
@@ -88,7 +97,7 @@ impl PartitionStateMachine {
         if partitions.is_empty() {
             return HashMap::new();
         }
-
+        self.request_batch.borrow_mut().new_batch();
         let result = self.do_handle_state_change(partitions, target_state);
         // TODO: send leaderAndIsr request out
         result
