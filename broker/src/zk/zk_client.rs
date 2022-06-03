@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, RwLock},
     time::Duration,
 };
-use zookeeper::{Acl, CreateMode, Stat, ZkError, ZkResult, ZooKeeper};
+use zookeeper::{Acl, CreateMode, Stat, ZkError, ZkResult, ZooKeeper, ZooKeeperExt};
 
 use super::zk_data::{
     IsrChangeNotificationSequenceZNode, IsrChangeNotificationZNode, PersistentZkPaths,
@@ -62,6 +62,15 @@ impl KafkaZkClient {
             .paths
             .iter()
             .map(|path| self.check_persistent_path(path))
+            .collect();
+    }
+
+    pub fn cleanup(&self) {
+        let persistent_path = PersistentZkPaths::init();
+        let _: Vec<ZkResult<()>> = persistent_path
+            .paths
+            .iter()
+            .map(|path| self.client.delete_recursive(path))
             .collect();
     }
 
