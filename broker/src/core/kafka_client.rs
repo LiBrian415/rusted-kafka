@@ -72,10 +72,4 @@ impl KafkaClient {
             .await?;
         Ok(resp.into_inner())
     }
-
-    pub async fn delete_all(&self) -> Result<(), Box<(dyn Error + Send + Sync)>> {
-        let mut client = self.connect().await?;
-        client.delete_all(Void {}).await?;
-        Ok(())
-    }
 }
