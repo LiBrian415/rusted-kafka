@@ -5,6 +5,10 @@ package broker;
 message Void {
 }
 
+message CreateInput {
+  repeated string topics = 1;
+}
+
 message ProducerInput {
   string topic = 1;
   uint32 partition = 2;
@@ -23,6 +27,8 @@ message ConsumerOutput {
 }
 
 service Broker {
+  rpc create(CreateInput) returns (Void);
   rpc produce(ProducerInput) returns (Void);
   rpc consume(ConsumerInput) returns (stream ConsumerOutput);
+  rpc delete_all(Void) returns (Void);
 }

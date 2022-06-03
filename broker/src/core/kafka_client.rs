@@ -3,7 +3,9 @@ use std::error::Error;
 use tokio::sync::Mutex;
 use tonic::{transport::Channel, Streaming};
 
-use crate::broker::{broker_client::BrokerClient, ConsumerInput, ConsumerOutput, ProducerInput};
+use crate::broker::{
+    broker_client::BrokerClient, ConsumerInput, ConsumerOutput, CreateInput, ProducerInput, Void,
+};
 
 pub struct KafkaClient {
     addr: String,
@@ -29,6 +31,12 @@ impl KafkaClient {
                 Ok(client)
             }
         }
+    }
+
+    pub async fn create(&self, topics: Vec<String>) -> Result<(), Box<(dyn Error + Send + Sync)>> {
+        let mut client = self.connect().await?;
+        client.create(CreateInput { topics }).await?;
+        Ok(())
     }
 
     pub async fn produce(
@@ -63,5 +71,11 @@ impl KafkaClient {
             })
             .await?;
         Ok(resp.into_inner())
+    }
+
+    pub async fn delete_all(&self) -> Result<(), Box<(dyn Error + Send + Sync)>> {
+        let mut client = self.connect().await?;
+        client.delete_all(Void {}).await?;
+        Ok(())
     }
 }

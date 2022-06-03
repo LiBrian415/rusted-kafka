@@ -1,6 +1,11 @@
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct Void {}
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CreateInput {
+    #[prost(string, repeated, tag = "1")]
+    pub topics: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ProducerInput {
     #[prost(string, tag = "1")]
     pub topic: ::prost::alloc::string::String,
@@ -85,6 +90,20 @@ pub mod broker_client {
             self.inner = self.inner.accept_gzip();
             self
         }
+        pub async fn create(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CreateInput>,
+        ) -> Result<tonic::Response<super::Void>, tonic::Status> {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/broker.Broker/create");
+            self.inner.unary(request.into_request(), path, codec).await
+        }
         pub async fn produce(
             &mut self,
             request: impl tonic::IntoRequest<super::ProducerInput>,
@@ -116,6 +135,20 @@ pub mod broker_client {
                 .server_streaming(request.into_request(), path, codec)
                 .await
         }
+        pub async fn delete_all(
+            &mut self,
+            request: impl tonic::IntoRequest<super::Void>,
+        ) -> Result<tonic::Response<super::Void>, tonic::Status> {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/broker.Broker/delete_all");
+            self.inner.unary(request.into_request(), path, codec).await
+        }
     }
 }
 #[doc = r" Generated server implementations."]
@@ -125,6 +158,10 @@ pub mod broker_server {
     #[doc = "Generated trait containing gRPC methods that should be implemented for use with BrokerServer."]
     #[async_trait]
     pub trait Broker: Send + Sync + 'static {
+        async fn create(
+            &self,
+            request: tonic::Request<super::CreateInput>,
+        ) -> Result<tonic::Response<super::Void>, tonic::Status>;
         async fn produce(
             &self,
             request: tonic::Request<super::ProducerInput>,
@@ -137,6 +174,10 @@ pub mod broker_server {
             &self,
             request: tonic::Request<super::ConsumerInput>,
         ) -> Result<tonic::Response<Self::consumeStream>, tonic::Status>;
+        async fn delete_all(
+            &self,
+            request: tonic::Request<super::Void>,
+        ) -> Result<tonic::Response<super::Void>, tonic::Status>;
     }
     #[derive(Debug)]
     pub struct BrokerServer<T: Broker> {
@@ -177,6 +218,37 @@ pub mod broker_server {
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             let inner = self.inner.clone();
             match req.uri().path() {
+                "/broker.Broker/create" => {
+                    #[allow(non_camel_case_types)]
+                    struct createSvc<T: Broker>(pub Arc<T>);
+                    impl<T: Broker> tonic::server::UnaryService<super::CreateInput> for createSvc<T> {
+                        type Response = super::Void;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CreateInput>,
+                        ) -> Self::Future {
+                            let inner = self.0.clone();
+                            let fut = async move { (*inner).create(request).await };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = createSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec).apply_compression_config(
+                            accept_compression_encodings,
+                            send_compression_encodings,
+                        );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
                 "/broker.Broker/produce" => {
                     #[allow(non_camel_case_types)]
                     struct produceSvc<T: Broker>(pub Arc<T>);
@@ -237,6 +309,34 @@ pub mod broker_server {
                             send_compression_encodings,
                         );
                         let res = grpc.server_streaming(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/broker.Broker/delete_all" => {
+                    #[allow(non_camel_case_types)]
+                    struct delete_allSvc<T: Broker>(pub Arc<T>);
+                    impl<T: Broker> tonic::server::UnaryService<super::Void> for delete_allSvc<T> {
+                        type Response = super::Void;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        fn call(&mut self, request: tonic::Request<super::Void>) -> Self::Future {
+                            let inner = self.0.clone();
+                            let fut = async move { (*inner).delete_all(request).await };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = delete_allSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec).apply_compression_config(
+                            accept_compression_encodings,
+                            send_compression_encodings,
+                        );
+                        let res = grpc.unary(method, req).await;
                         Ok(res)
                     };
                     Box::pin(fut)

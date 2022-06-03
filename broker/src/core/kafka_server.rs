@@ -14,7 +14,7 @@ use tonic::{transport::Server, Response, Status};
 use crate::{
     broker::{
         broker_server::{Broker, BrokerServer},
-        ConsumerInput, ConsumerOutput, ProducerInput, Void,
+        ConsumerInput, ConsumerOutput, CreateInput, ProducerInput, Void,
     },
     common::{broker::BrokerInfo, topic_partition::TopicPartition},
     controller::controller_worker::ControllerWorker,
@@ -60,6 +60,7 @@ async fn wait_shutdown(receiver: Option<Receiver<()>>) {
 
 pub struct KafkaServer;
 struct BrokerStream {
+    zk_client: Arc<KafkaZkClient>,
     controller: ControllerWorker,
     replica_manager: Arc<ReplicaManager>,
 }
@@ -77,17 +78,24 @@ impl KafkaServer {
             "localhost:2181",
             Duration::from_secs(3),
         )?);
+        zk_client.create_top_level_paths();
 
         // Start controller
-        let broker_info = BrokerInfo::init(addrs[this].as_str(), "7777", 0);
+        let broker_info = BrokerInfo::init(addrs[this].as_str(), "7777", this as u32);
         let broker_epoch = 0;
         let controller = ControllerWorker::startup(zk_client.clone(), broker_info, broker_epoch);
         controller.activate();
 
         let log_manager = Arc::new(LogManager::init());
-        let replica_manager = Arc::new(ReplicaManager::init(0, None, log_manager, zk_client));
+        let replica_manager = Arc::new(ReplicaManager::init(
+            0,
+            None,
+            log_manager,
+            zk_client.clone(),
+        ));
 
         let svc = BrokerServer::new(BrokerStream {
+            zk_client,
             controller,
             replica_manager,
         });
@@ -115,6 +123,31 @@ impl KafkaServer {
 #[async_trait]
 impl Broker for BrokerStream {
     type consumeStream = tokio_stream::wrappers::ReceiverStream<Result<ConsumerOutput, Status>>;
+
+    async fn create(
+        &self,
+        request: tonic::Request<CreateInput>,
+    ) -> Result<tonic::Response<Void>, tonic::Status> {
+        let CreateInput { topics } = request.into_inner();
+
+        match self.zk_client.create_new_topic(topics.clone()) {
+            Ok(()) => match self.zk_client.get_partitions_for_topics(topics.clone()) {
+                Ok(topic_partitions) => {
+                    for topic in topics {
+                        if let Some(partitions) = topic_partitions.get(&topic) {
+                            for partition in partitions {
+                                let tp = TopicPartition::init(&topic, partition.to_owned());
+                                // self.replica_manager.make_leader(tp, leader_and_isr);
+                            }
+                        }
+                    }
+                    Ok(Response::new(Void {}))
+                }
+                Err(e) => Err(tonic::Status::unknown(e.to_string())),
+            },
+            Err(e) => Err(tonic::Status::unknown(e.to_string())),
+        }
+    }
 
     async fn produce(
         &self,
@@ -177,5 +210,16 @@ impl Broker for BrokerStream {
 
         // let output_stream = ReceiverStream::new(rx);
         // Ok(Response::new(output_stream as Self::consumeStream))
+    }
+
+    async fn delete_all(
+        &self,
+        request: tonic::Request<Void>,
+    ) -> Result<tonic::Response<Void>, tonic::Status> {
+        let Void {} = request.into_inner();
+
+        self.zk_client.cleanup();
+
+        Ok(Response::new(Void {}))
     }
 }
