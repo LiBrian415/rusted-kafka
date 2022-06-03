@@ -39,24 +39,20 @@ pub fn get_change_handlers(
     change_handlers
 }
 
-pub fn get_child_change_handlers(
-    em: ControllerEventManager,
-) -> HashMap<String, Arc<dyn ZkChildChangeHandler>> {
-    let mut child_change_handlers: HashMap<String, Arc<dyn ZkChildChangeHandler>> = HashMap::new();
+pub fn get_child_change_handlers(em: ControllerEventManager) -> Vec<Arc<dyn ZkChildChangeHandler>> {
+    let mut child_change_handlers: Vec<Arc<dyn ZkChildChangeHandler>> = Vec::new();
 
-    child_change_handlers.insert(
-        "BrokerChange".to_string(),
-        Arc::new(BrokerChangeHandler {
-            event_manager: em.clone(),
-        }),
-    );
+    child_change_handlers.push(Arc::new(BrokerChangeHandler {
+        event_manager: em.clone(),
+    }));
 
-    child_change_handlers.insert(
-        "TopicChange".to_string(),
-        Arc::new(TopicChangeHandler {
-            event_manager: em.clone(),
-        }),
-    );
+    child_change_handlers.push(Arc::new(TopicChangeHandler {
+        event_manager: em.clone(),
+    }));
+
+    child_change_handlers.push(Arc::new(IsrChangeNotificationHandler {
+        event_manager: em.clone(),
+    }));
 
     child_change_handlers
 }

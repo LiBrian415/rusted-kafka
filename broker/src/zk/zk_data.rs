@@ -115,7 +115,7 @@ impl TopicZNode {
     }
 
     pub fn decode_with_topic(topic: String, data: &Vec<u8>) -> TopicIdReplicaAssignment {
-        let replica_assignment = serde_json::from_slice::<ReplicaAssignment>(data).unwrap();
+        let replica_assignment = bincode::deserialize::<ReplicaAssignment>(data).unwrap();
         let partitions: Vec<TopicPartition> =
             replica_assignment.partitions.keys().cloned().collect();
 

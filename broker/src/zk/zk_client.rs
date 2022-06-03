@@ -144,7 +144,7 @@ impl KafkaZkClient {
     }
 
     // Controller
-
+    // TODO: double check
     pub fn register_controller_and_increment_controller_epoch(
         &self,
         controller_id: u32,
@@ -186,6 +186,7 @@ impl KafkaZkClient {
                     ZkError::BadVersion => match self.check_epoch(new_controller_epoch) {
                         Ok(result) => {
                             correct_epoch = result;
+                            correct_controller = true;
                         }
                         Err(e) => return Err(e),
                     },
@@ -196,6 +197,7 @@ impl KafkaZkClient {
                 ZkError::NodeExists => match self.check_controller(controller_id) {
                     Ok(result) => {
                         correct_controller = result;
+                        correct_epoch = true;
                     }
                     Err(e) => return Err(e),
                 },

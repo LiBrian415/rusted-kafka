@@ -36,7 +36,7 @@ impl ControllerChannelManager {
     }
 
     pub fn startup(&self) {
-        todo!();
+        println!("channel manager started");
     }
 
     pub fn shutdown(&self) {

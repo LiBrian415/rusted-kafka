@@ -10,7 +10,8 @@ use std::{
 
 use super::{
     change_handlers::{
-        BrokerChangeHandler, BrokerModificationHandler, ControllerChangeHandler, TopicChangeHandler,
+        get_child_change_handlers, BrokerChangeHandler, BrokerModificationHandler,
+        ControllerChangeHandler, TopicChangeHandler,
     },
     constants::{
         EVENT_BROKER_CHANGE, EVENT_BROKER_MODIFICATION, EVENT_CONTROLLER_CHANGE,
@@ -104,12 +105,14 @@ impl Controller {
 
     /***** Process Functions Entry Points for Events Start *****/
     fn process_startup(&self) {
+        println!("process startup");
         let _ = self
             .zk_client
             .register_znode_change_handler_and_check_existence(Arc::new(ControllerChangeHandler {
                 event_manager: self.em.clone(),
             }));
         self.elect();
+        println!("processed startup");
     }
 
     fn process_broker_modification(&self, broker_id: u32) {
@@ -143,7 +146,9 @@ impl Controller {
 
     fn process_re_elect(&self) {
         self.maybe_resign();
+        println!("maybe resign done");
         self.elect();
+        println!("elect done");
     }
 
     fn process_broker_change(&self) {
@@ -203,6 +208,7 @@ impl Controller {
     }
 
     fn process_topic_change(&self) {
+        println!("start process topic change");
         if !self.is_active() {
             return;
         }
@@ -260,7 +266,10 @@ impl Controller {
 
     fn process_register_broker_and_reelect(&self) {
         match self.zk_client.register_broker(self.broker_info.clone()) {
-            Ok(_) => self.process_re_elect(),
+            Ok(_) => {
+                self.process_re_elect();
+                println!("broker has been registerd and reelct is done");
+            }
             Err(_) => {
                 return;
             }
@@ -343,7 +352,9 @@ impl Controller {
                 std::mem::drop(context);
                 std::mem::drop(active_id);
 
+                println!("controller failover start");
                 self.controller_failover();
+                println!("controller failover done");
             }
             Err(_) => {
                 // TODO: handle ControllerMovedException and others
@@ -355,33 +366,15 @@ impl Controller {
     // invoked when this broker is elected as the new controller
     fn controller_failover(&self) {
         // register watchers to get broker/topic callbacks
-        let _: Vec<()> = self
-            .zk_client
-            .handlers
-            .child_change_handlers
-            .read()
-            .unwrap()
+        let _: Vec<()> = get_child_change_handlers(self.em.clone())
             .iter()
-            .map(|(_, handler)| {
+            .map(|handler| {
                 self.zk_client
                     .register_znode_child_change_handler(handler.clone())
             })
             .collect();
 
-        let _: Vec<()> = self
-            .zk_client
-            .handlers
-            .change_handlers
-            .read()
-            .unwrap()
-            .iter()
-            .map(|(_, handler)| {
-                let _ = self
-                    .zk_client
-                    .register_znode_change_handler_and_check_existence(handler.clone());
-            })
-            .collect();
-
+        println!("child change handler registered");
         // initialize the controller's context that holds cache objects for current topics, live brokers
         // leaders for all existing partitions
         let context = self.context.borrow();
@@ -389,7 +382,9 @@ impl Controller {
             .zk_client
             .delete_isr_change_notifications(context.epoch_zk_version);
         std::mem::drop(context);
+        println!("deleted isr change notification");
         self.initialize_control_context();
+        println!("initialized controller context");
 
         // Send UpdateMetadata after the context is initialized and before the state machines startup.
         // reason: brokers need to receive the list of live brokers from UpdateMetadata before they can
@@ -403,6 +398,7 @@ impl Controller {
             HashSet::new(),
         );
 
+        std::mem::drop(context);
         self.replica_state_machine.startup();
         self.partition_state_machine.startup();
         // if any unexpected errors/ resigns as the current controller
@@ -428,7 +424,7 @@ impl Controller {
             }
         }
 
-        // TODO: Here the source code register the partitionModification handlers with zk
+        // Here the source code register the partitionModification handlers with zk
 
         match self
             .zk_client

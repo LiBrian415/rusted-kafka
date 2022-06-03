@@ -46,9 +46,9 @@ impl ReplicaStateMachine {
 
     pub fn startup(&self) {
         self.initialize_replica_state();
-        let (online, offline) = self.context.borrow().online_and_offline_replicas();
-        self.handle_state_change(online, Arc::new(OnlineReplica {}));
-        self.handle_state_change(offline, Arc::new(OfflineReplica {}));
+        // let (online, offline) = self.context.borrow().online_and_offline_replicas();
+        // self.handle_state_change(online, Arc::new(OnlineReplica {}));
+        // self.handle_state_change(offline, Arc::new(OfflineReplica {}));
     }
 
     pub fn shutdown(&self) {
