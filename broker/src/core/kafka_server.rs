@@ -212,15 +212,4 @@ impl Broker for BrokerStream {
         // let output_stream = ReceiverStream::new(rx);
         // Ok(Response::new(output_stream as Self::consumeStream))
     }
-
-    async fn delete_all(
-        &self,
-        request: tonic::Request<Void>,
-    ) -> Result<tonic::Response<Void>, tonic::Status> {
-        let Void {} = request.into_inner();
-
-        self.zk_client.cleanup();
-
-        Ok(Response::new(Void {}))
-    }
 }

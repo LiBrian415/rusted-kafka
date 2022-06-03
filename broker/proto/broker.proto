@@ -30,5 +30,4 @@ service Broker {
   rpc create(CreateInput) returns (Void);
   rpc produce(ProducerInput) returns (Void);
   rpc consume(ConsumerInput) returns (stream ConsumerOutput);
-  rpc delete_all(Void) returns (Void);
 }
