@@ -615,12 +615,12 @@ impl Controller {
         self.partition_state_machine
             .handle_state_change(new_partitions.clone(), Arc::new(NewPartition {}));
         self.replica_state_machine
-            .handle_state_change(replicas.clone(), Box::new(NewReplica {}));
+            .handle_state_change(replicas.clone(), Arc::new(NewReplica {}));
         self.partition_state_machine
             .handle_state_change(new_partitions, Arc::new(OnlinePartition {}));
 
         self.replica_state_machine
-            .handle_state_change(replicas, Box::new(OnlineReplica {}));
+            .handle_state_change(replicas, Arc::new(OnlineReplica {}));
     }
 
     fn on_broker_startup(&self, broker: Vec<u32>) {
@@ -642,7 +642,7 @@ impl Controller {
         let all_replias_on_new_brokers = context.replicas_on_brokers(broker_set.clone());
 
         self.replica_state_machine
-            .handle_state_change(all_replias_on_new_brokers, Box::new(OnlineReplica {}));
+            .handle_state_change(all_replias_on_new_brokers, Arc::new(OnlineReplica {}));
 
         self.partition_state_machine
             .trigger_online_partition_state_change();
@@ -670,7 +670,7 @@ impl Controller {
         self.partition_state_machine
             .trigger_online_partition_state_change();
         self.replica_state_machine
-            .handle_state_change(replicas, Box::new(OfflineReplica {}));
+            .handle_state_change(replicas, Arc::new(OfflineReplica {}));
     }
 
     fn on_replica_election(&self, partitions: HashSet<TopicPartition>) {

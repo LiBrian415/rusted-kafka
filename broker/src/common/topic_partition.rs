@@ -71,3 +71,18 @@ impl LeaderAndIsr {
         }
     }
 }
+
+#[derive(Eq, PartialEq, Hash, Clone)]
+pub struct PartitionReplica {
+    pub partition: TopicPartition,
+    pub replica: u32,
+}
+
+impl PartitionReplica {
+    pub fn init(partition: TopicPartition, replica: u32) -> PartitionReplica {
+        PartitionReplica {
+            partition: partition,
+            replica: replica,
+        }
+    }
+}

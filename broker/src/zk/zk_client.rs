@@ -550,6 +550,10 @@ impl KafkaZkClient {
                 Err(e) => return Err(e),
             }
 
+            let _ = match self.create_topic_partitions(vec![topic.to_string()])[0] {
+                Ok(_) => {}
+                Err(e) => return Err(e),
+            };
             let mut new_partitions = Vec::new();
             for i in 0..*num_partition {
                 let partition = TopicPartition::init(topic.as_str(), i);

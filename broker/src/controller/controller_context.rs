@@ -5,10 +5,10 @@ use std::{
 
 use crate::common::{
     broker::BrokerInfo,
-    topic_partition::{LeaderAndIsr, ReplicaAssignment, TopicPartition},
+    topic_partition::{LeaderAndIsr, PartitionReplica, ReplicaAssignment, TopicPartition},
 };
 
-use super::partition_state_machine::PartitionState;
+use super::{partition_state_machine::PartitionState, replica_state_machine::ReplicaState};
 
 pub struct ControllerContext {
     pub shuttingdown_broker_ids: HashSet<u32>,
@@ -20,9 +20,10 @@ pub struct ControllerContext {
     pub partitions_being_reassigned: HashSet<TopicPartition>,
     topic_ids: HashMap<String, u32>,   // topic name -> topic id
     topic_names: HashMap<u32, String>, // topic id -> topic name
-    partition_assignments: HashMap<String, ReplicaAssignment>, // topic name -> assignment
+    pub partition_assignments: HashMap<String, ReplicaAssignment>, // topic name -> assignment
     pub partition_leadership_info: HashMap<TopicPartition, LeaderAndIsr>, // topicPartition -> leaderAndIsr
     pub partition_states: HashMap<TopicPartition, Arc<dyn PartitionState>>,
+    pub replica_states: HashMap<PartitionReplica, Arc<dyn ReplicaState>>,
     topics_to_be_deleted: HashSet<String>,
 }
 
@@ -41,6 +42,7 @@ impl ControllerContext {
         let partition_leadership_info = HashMap::new();
         let topics_to_be_deleted = HashSet::new();
         let partition_states = HashMap::new();
+        let replica_states = HashMap::new();
         Self {
             shuttingdown_broker_ids,
             live_brokers,
@@ -55,6 +57,7 @@ impl ControllerContext {
             partition_leadership_info,
             topics_to_be_deleted,
             partition_states,
+            replica_states,
         }
     }
 
@@ -338,5 +341,18 @@ impl ControllerContext {
         }
 
         valids
+    }
+
+    pub fn online_and_offline_replicas(
+        &self,
+    ) -> (
+        HashSet<(TopicPartition, u32)>,
+        HashSet<(TopicPartition, u32)>,
+    ) {
+        todo!();
+    }
+
+    pub fn put_replica_state(&mut self, replica: PartitionReplica, state: Arc<dyn ReplicaState>) {
+        self.replica_states.insert(replica, state);
     }
 }
