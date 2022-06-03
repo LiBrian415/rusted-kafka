@@ -113,7 +113,7 @@ impl PartitionStateMachine {
             context.check_valid_partition_state_change(partitions, target_state.clone());
 
         match target_state.state() {
-            NEW_PARTITION | OFFLINE_PARTITION => {
+            NEW_PARTITION | OFFLINE_PARTITION | NON_EXISTENT_PARTITION => {
                 let _: Vec<()> = valid_partitions
                     .iter()
                     .map(|partition| {
