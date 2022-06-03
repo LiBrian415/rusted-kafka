@@ -534,8 +534,8 @@ impl KafkaZkClient {
     }
     // Topic + Partition
 
-    pub fn create_new_topic(&self, topics: Vec<String>) -> ZkResult<()> {
-        for topic in topics.iter() {
+    pub fn create_new_topic(&self, topics_and_num_partitions: Vec<(String, u32)>) -> ZkResult<()> {
+        for (topic, num_partition) in topics_and_num_partitions.iter() {
             let path = TopicZNode::path(topic);
             let mut partitions: HashMap<TopicPartition, Vec<u32>> = HashMap::new();
             partitions.insert(TopicPartition::init(topic, 0), vec![0]);
@@ -548,6 +548,21 @@ impl KafkaZkClient {
             ) {
                 Ok(_) => {}
                 Err(e) => return Err(e),
+            }
+
+            let mut new_partitions = Vec::new();
+            for i in 0..*num_partition {
+                let partition = TopicPartition::init(topic.as_str(), i);
+                new_partitions.push(partition);
+            }
+            let resp = self.create_topic_partition(new_partitions);
+            for r in resp {
+                match r {
+                    Ok(_) => {}
+                    Err(e) => {
+                        return Err(e);
+                    }
+                }
             }
         }
 

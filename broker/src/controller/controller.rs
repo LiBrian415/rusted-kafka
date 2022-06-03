@@ -477,11 +477,7 @@ impl Controller {
         match self.zk_client.get_topic_partition_states(partitions) {
             Ok(leader_isr_and_epochs) => {
                 for (partition, leader_isr) in leader_isr_and_epochs {
-                    context.put_partition_leadership_info(
-                        partition,
-                        leader_isr.clone(),
-                        leader_isr.controller_epoch,
-                    );
+                    context.put_partition_leadership_info(partition, leader_isr.clone());
                 }
             }
             Err(_) => {}
@@ -617,11 +613,11 @@ impl Controller {
         let replicas = context.replicas_for_partition(partitions);
 
         self.partition_state_machine
-            .handle_state_change(new_partitions.clone(), Box::new(NewPartition {}));
+            .handle_state_change(new_partitions.clone(), Arc::new(NewPartition {}));
         self.replica_state_machine
             .handle_state_change(replicas.clone(), Box::new(NewReplica {}));
         self.partition_state_machine
-            .handle_state_change(new_partitions, Box::new(OnlinePartition {}));
+            .handle_state_change(new_partitions, Arc::new(OnlinePartition {}));
 
         self.replica_state_machine
             .handle_state_change(replicas, Box::new(OnlineReplica {}));
@@ -668,7 +664,7 @@ impl Controller {
             self.context.borrow_mut().partitions_with_offline_leader();
         self.partition_state_machine.handle_state_change(
             partitions_with_offline_leader,
-            Box::new(OfflinePartition {}),
+            Arc::new(OfflinePartition {}),
         );
 
         self.partition_state_machine
@@ -679,7 +675,7 @@ impl Controller {
 
     fn on_replica_election(&self, partitions: HashSet<TopicPartition>) {
         self.partition_state_machine
-            .handle_state_change(partitions, Box::new(OnlinePartition {}));
+            .handle_state_change(partitions, Arc::new(OnlinePartition {}));
     }
 }
 

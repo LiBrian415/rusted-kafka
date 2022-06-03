@@ -1,12 +1,16 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use crate::common::{
     broker::BrokerInfo,
     topic_partition::{LeaderAndIsr, ReplicaAssignment, TopicPartition},
 };
 
+use super::partition_state_machine::PartitionState;
+
 pub struct ControllerContext {
-    // offline_partition_cnt: u32,
     pub shuttingdown_broker_ids: HashSet<u32>,
     pub live_brokers: HashSet<BrokerInfo>,
     live_broker_epochs: HashMap<u32, i64>, // topic id -> epoch
@@ -17,8 +21,8 @@ pub struct ControllerContext {
     topic_ids: HashMap<String, u32>,   // topic name -> topic id
     topic_names: HashMap<u32, String>, // topic id -> topic name
     partition_assignments: HashMap<String, ReplicaAssignment>, // topic name -> assignment
-    partition_leadership_info: HashMap<TopicPartition, (LeaderAndIsr, u128)>, // topicPartition -> (leaderAndIsr, epoch)
-    // replica_states: HashMap<>,
+    pub partition_leadership_info: HashMap<TopicPartition, LeaderAndIsr>, // topicPartition -> leaderAndIsr
+    pub partition_states: HashMap<TopicPartition, Arc<dyn PartitionState>>,
     topics_to_be_deleted: HashSet<String>,
 }
 
@@ -36,7 +40,7 @@ impl ControllerContext {
         let partition_assignments = HashMap::new();
         let partition_leadership_info = HashMap::new();
         let topics_to_be_deleted = HashSet::new();
-
+        let partition_states = HashMap::new();
         Self {
             shuttingdown_broker_ids,
             live_brokers,
@@ -50,6 +54,7 @@ impl ControllerContext {
             partition_assignments,
             partition_leadership_info,
             topics_to_be_deleted,
+            partition_states,
         }
     }
 
@@ -182,11 +187,11 @@ impl ControllerContext {
         &mut self,
         partition: TopicPartition,
         leader_isr: LeaderAndIsr,
-        epoch: u128,
+        // epoch: u128,
     ) {
         match self.partition_leadership_info.get_mut(&partition) {
             Some(info) => {
-                *info = (leader_isr, epoch);
+                *info = leader_isr;
                 // TODO: updatePreferredReplicaImbalanceMetric?
             }
             None => {}
@@ -279,7 +284,7 @@ impl ControllerContext {
     pub fn partitions_with_offline_leader(&mut self) -> HashSet<TopicPartition> {
         let mut partition_leadership_info = self.partition_leadership_info.clone();
         partition_leadership_info.retain(|partition, leader_and_isr| {
-            !self.is_replica_online(leader_and_isr.0.leader, partition.clone())
+            !self.is_replica_online(leader_and_isr.leader, partition.clone())
         });
 
         self.partition_leadership_info = partition_leadership_info.clone();
@@ -289,5 +294,49 @@ impl ControllerContext {
 
     pub fn is_replica_online(&self, broker_id: u32, _partition: TopicPartition) -> bool {
         self.live_broker_ids().contains(&broker_id)
+    }
+
+    pub fn put_partition_state(
+        &mut self,
+        partition: TopicPartition,
+        state: Arc<dyn PartitionState>,
+    ) {
+        match self.partition_states.get_mut(&partition) {
+            Some(entry) => {
+                *entry = state;
+            }
+            None => {
+                self.partition_states.insert(partition, state);
+            }
+        }
+    }
+
+    pub fn get_partitions(&self, states: Vec<u32>) -> HashSet<TopicPartition> {
+        let mut results = HashSet::new();
+        for (partition, state) in self.partition_states.iter() {
+            if states.contains(&state.state()) {
+                results.insert(partition.clone());
+            }
+        }
+
+        results
+    }
+
+    pub fn check_valid_partition_state_change(
+        &self,
+        partitions: HashSet<TopicPartition>,
+        target_state: Arc<dyn PartitionState>,
+    ) -> Vec<TopicPartition> {
+        let mut valids = Vec::new();
+        for partition in partitions.iter() {
+            if target_state
+                .valid_previous_state()
+                .contains(&self.partition_states.get(partition).unwrap().state())
+            {
+                valids.push(partition.clone());
+            }
+        }
+
+        valids
     }
 }
