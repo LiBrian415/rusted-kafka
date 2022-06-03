@@ -78,6 +78,7 @@ impl KafkaServer {
             "localhost:2181",
             Duration::from_secs(3),
         )?);
+        zk_client.cleanup();
         zk_client.create_top_level_paths();
 
         // Start controller

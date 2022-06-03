@@ -537,9 +537,12 @@ impl KafkaZkClient {
     pub fn create_new_topic(&self, topics: Vec<String>) -> ZkResult<()> {
         for topic in topics.iter() {
             let path = TopicZNode::path(topic);
+            let mut partitions: HashMap<TopicPartition, Vec<u32>> = HashMap::new();
+            partitions.insert(TopicPartition::init(topic, 0), vec![0]);
+            let data = ReplicaAssignment::init(partitions, HashMap::new(), HashMap::new());
             match self.client.create(
                 path.as_str(),
-                Vec::new(),
+                TopicZNode::encode(data),
                 Acl::open_unsafe().clone(),
                 CreateMode::Persistent,
             ) {

@@ -31,7 +31,7 @@ async fn simple_test() -> Result<(), Box<(dyn Error + Send + Sync)>> {
     let produce_client = KafkaClient::new(DEFAULT_ADDR.to_owned(), DEFAULT_PORT.to_owned());
     let consume_client = KafkaClient::new(DEFAULT_ADDR.to_owned(), DEFAULT_PORT.to_owned());
 
-    produce_client.delete_all().await?;
+    // produce_client.delete_all().await?;
     produce_client.create(vec!["greeting".to_owned()]).await?;
     produce_client.produce("greeting".to_owned(), 0, "Hello, World!".as_bytes().to_vec()).await?;
 
