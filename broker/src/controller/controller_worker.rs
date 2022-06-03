@@ -36,9 +36,12 @@ impl ControllerWorker {
         }
     }
 
-    pub fn activate(&self) {
+    pub async fn activate(&self) {
+        let (tx, rx) = sync_channel(1);
+
         // TODO: maybe an expire event here
         let _ = self.event_tx.send(Box::new(RegisterBrokerAndReElect {}));
-        let _ = self.event_tx.send(Box::new(Startup {}));
+        let _ = self.event_tx.send(Box::new(Startup { tx }));
+        rx.recv();
     }
 }
