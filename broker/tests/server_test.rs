@@ -32,6 +32,7 @@ async fn simple_test() -> Result<(), Box<(dyn Error + Send + Sync)>> {
     let consume_client = KafkaClient::new(DEFAULT_ADDR.to_owned(), DEFAULT_PORT.to_owned());
 
     produce_client.create(vec![("greeting".to_owned(), 1)]).await?;
+    println!("created");
     produce_client.produce("greeting".to_owned(), 0, "Hello, World!".as_bytes().to_vec()).await?;
 
     // let consume_handle = tokio::spawn(async move {

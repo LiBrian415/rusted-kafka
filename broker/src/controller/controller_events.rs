@@ -42,7 +42,7 @@ impl ControllerEvent for Startup {
     }
 
     fn complete(&self) -> () {
-        self.tx.send(());
+        let _ = self.tx.send(());
     }
 }
 

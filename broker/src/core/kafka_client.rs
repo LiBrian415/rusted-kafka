@@ -38,7 +38,7 @@ impl KafkaClient {
         }
     }
 
-    pub async fn topic_partition_leader(
+    pub async fn set_topic_partition_leader(
         &self,
         topic_partition: TopicPartition,
         leader_and_isr: LeaderAndIsr,

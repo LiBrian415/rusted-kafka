@@ -321,7 +321,7 @@ impl ControllerContext {
         state: Arc<dyn PartitionState>,
     ) {
         match self.partition_states.get_mut(&partition) {
-            Some(old_state) => *old_state = state,
+            Some(_) => {}
             None => {
                 self.partition_states.insert(partition, state);
             }

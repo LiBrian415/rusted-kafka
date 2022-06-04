@@ -1,8 +1,10 @@
+use core::time;
 use std::{
     collections::HashMap,
     error::Error,
     net::{SocketAddr, ToSocketAddrs},
     sync::{mpsc::Sender, Arc, RwLock},
+    thread,
     time::Duration,
 };
 
@@ -41,6 +43,13 @@ fn parse_socket(addr: String) -> Result<SocketAddr, Box<(dyn Error + Send + Sync
             },
         },
         Err(e) => return Err(Box::new(e)),
+    }
+}
+
+fn parse_address(addr: String) -> Result<(String, String), Box<(dyn Error + Send + Sync)>> {
+    match addr.rsplit_once(':') {
+        Some((host, port)) => Ok((host.to_owned(), port.to_owned())),
+        None => Ok((addr, "".to_owned())),
     }
 }
 
@@ -88,7 +97,11 @@ impl KafkaServer {
         let broker_id = this as u32;
 
         // Start controller
-        let broker_info = BrokerInfo::init(addrs[this].as_str(), "7777", broker_id);
+        let (host, port) = match parse_address(addrs[this].clone()) {
+            Ok(r) => r,
+            Err(e) => return Err(e),
+        };
+        let broker_info = BrokerInfo::init(host.as_str(), port.as_str(), broker_id);
         let broker_epoch = 0;
         let controller = ControllerWorker::startup(zk_client.clone(), broker_info, broker_epoch);
         controller.activate().await;
@@ -180,7 +193,10 @@ impl Broker for BrokerStream {
             .collect();
 
         match self.zk_client.create_new_topic(topic_partitions) {
-            Ok(()) => Ok(Response::new(Void {})),
+            Ok(()) => {
+                thread::sleep(time::Duration::from_secs(2));
+                Ok(Response::new(Void {}))
+            }
             Err(e) => Err(tonic::Status::unknown(e.to_string())),
         }
     }

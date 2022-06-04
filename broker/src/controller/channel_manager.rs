@@ -1,6 +1,10 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::RwLock};
-
-use tokio::sync::Mutex;
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    rc::Rc,
+    sync::{Arc, RwLock},
+    thread,
+};
 
 use crate::{
     common::{
@@ -12,10 +16,11 @@ use crate::{
 };
 
 use super::event_manager::ControllerEventManager;
+use tokio::runtime::Runtime;
 
 pub struct BrokerClient {
     broker_info: BrokerInfo,
-    broker_client: KafkaClient,
+    broker_client: Arc<KafkaClient>,
 }
 
 // A structure responsible for managing the active broker connections
@@ -33,6 +38,11 @@ impl ControllerChannelManager {
     }
 
     pub fn startup(&self) {
+        let context = self.context.borrow();
+        let brokers = context.live_or_shutting_down_brokers();
+        for broker in brokers {
+            self.add_broker(broker);
+        }
         println!("channel manager started");
     }
 
@@ -51,8 +61,12 @@ impl ControllerChannelManager {
             port,
             id: _,
         } = broker_info.clone();
-        let broker_client = KafkaClient::new(hostname, port);
+        let broker_client = Arc::new(KafkaClient::new(hostname, port));
 
+        println!(
+            "broker {}:{} is added",
+            broker_info.hostname, broker_info.port
+        );
         let mut w = self.brokers.write().unwrap();
         (*w).insert(
             broker_info.id,
@@ -110,23 +124,32 @@ impl ControllerBrokerRequestBatch {
         todo!();
     }
 
-    pub async fn send_request_to_brokers(&self, epoch: u128) {
+    pub fn send_request_to_brokers(&self, epoch: u128) {
         // send request, and if success, send an event over eventManager
+        let rt = Runtime::new().unwrap();
+        let handle = rt.handle();
+        println!(
+            "we have {} messages to send",
+            self.leader_and_isr_requests.len()
+        );
+
         for (broker, message) in self.leader_and_isr_requests.iter() {
-            let client = self
-                .channel_manager
-                .borrow()
-                .brokers
-                .read()
-                .unwrap()
-                .get(&broker);
-            if !client.is_none() {
-                client
-                    .unwrap()
-                    .broker_client
-                    .set_topic_partition_leader(message.0, message.1)
+            let manager = self.channel_manager.borrow();
+            let client = match manager.brokers.read().unwrap().get(&broker) {
+                Some(c) => c.broker_client.clone(),
+                None => {
+                    println!("no client found");
+                    return;
+                }
+            };
+
+            println!("start sending");
+            handle.block_on(async {
+                println!("send out request");
+                let _ = client
+                    .set_topic_partition_leader(message.0.clone(), message.1.clone())
                     .await;
-            }
+            });
         }
     }
 

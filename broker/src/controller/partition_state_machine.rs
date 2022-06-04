@@ -97,9 +97,23 @@ impl PartitionStateMachine {
         if partitions.is_empty() {
             return HashMap::new();
         }
-        self.request_batch.borrow_mut().new_batch();
+        let mut batch = self.request_batch.borrow_mut();
+        batch.new_batch();
+        batch.add_leader_and_isr_request_for_brokers(
+            vec![0],
+            partitions
+                .get(&TopicPartition::init("greeting", 0))
+                .unwrap()
+                .clone(),
+            LeaderAndIsr::init(0, vec![0], 0, 0),
+        );
+        std::mem::drop(batch);
         let result = self.do_handle_state_change(partitions, target_state);
-        // TODO: send leaderAndIsr request out
+
+        let batch = self.request_batch.borrow();
+        let context = self.context.borrow();
+        batch.send_request_to_brokers(context.epoch);
+
         result
     }
 
@@ -119,10 +133,20 @@ impl PartitionStateMachine {
             })
             .collect();
         let valid_partitions =
-            context.check_valid_partition_state_change(partitions, target_state.clone());
+            context.check_valid_partition_state_change(partitions.clone(), target_state.clone());
+
+        println!(
+            "{:?}, valid: {:?}: target = {}",
+            partitions,
+            valid_partitions,
+            target_state.state()
+        );
+
+        std::mem::drop(context);
 
         match target_state.state() {
             NEW_PARTITION | OFFLINE_PARTITION | NON_EXISTENT_PARTITION => {
+                let mut context = self.context.borrow_mut();
                 let _: Vec<()> = valid_partitions
                     .iter()
                     .map(|partition| {
@@ -132,6 +156,7 @@ impl PartitionStateMachine {
                 HashMap::new()
             }
             ONLINE_PARTITION => {
+                let mut context = self.context.borrow_mut();
                 let mut uninitial_partitions = valid_partitions.clone();
                 uninitial_partitions.retain(|partition| {
                     context.partition_states.get(&partition).unwrap().state() == NEW_PARTITION
@@ -143,8 +168,11 @@ impl PartitionStateMachine {
                             == ONLINE_PARTITION
                 });
 
+                println!("{:?}, {:?}", uninitial_partitions, to_elect_partitions);
+                std::mem::drop(context);
                 if !uninitial_partitions.is_empty() {
                     let initialized_partitions = self.initialize_partitions(uninitial_partitions);
+                    let mut context = self.context.borrow_mut();
                     for partition in initialized_partitions {
                         context.put_partition_state(partition, target_state.clone())
                     }
@@ -153,6 +181,7 @@ impl PartitionStateMachine {
                 if !to_elect_partitions.is_empty() {
                     let partitions_with_leader =
                         self.elect_leader_for_partitions(to_elect_partitions);
+                    let mut context = self.context.borrow_mut();
                     for (partition, _) in partitions_with_leader.iter() {
                         context.put_partition_state(partition.clone(), target_state.clone());
                     }
@@ -206,8 +235,15 @@ impl PartitionStateMachine {
             )]))[0]
             {
                 Ok(_) => {
-                    context.put_partition_leadership_info(partition.clone(), leader_and_isr);
+                    context
+                        .put_partition_leadership_info(partition.clone(), leader_and_isr.clone());
                     // TODO: send leaderAndIsr request
+                    let mut batch = self.request_batch.borrow_mut();
+                    batch.add_leader_and_isr_request_for_brokers(
+                        leader_and_isr.isr.clone(),
+                        partition.clone(),
+                        leader_and_isr,
+                    );
                     succ_init_partitions.push(partition.clone());
                 }
                 Err(_) => {}

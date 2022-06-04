@@ -85,7 +85,7 @@ impl ReplicaStateMachine {
             return;
         }
 
-        println!("{:?}", replicas);
+        //println!("{:?}", replicas);
         let mut rid_to_replicas: HashMap<u32, HashSet<PartitionReplica>> = HashMap::new();
         for replica in replicas.iter() {
             match rid_to_replicas.get_mut(&replica.replica) {
@@ -100,7 +100,7 @@ impl ReplicaStateMachine {
         }
 
         for (rid, grouped_replicas) in rid_to_replicas {
-            println!("{}, {:?}", rid, grouped_replicas);
+            // println!("{}, {:?}", rid, grouped_replicas);
             self.do_handle_state_change(rid, grouped_replicas, target_state.clone());
         }
 

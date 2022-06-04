@@ -42,6 +42,6 @@ impl ControllerWorker {
         // TODO: maybe an expire event here
         let _ = self.event_tx.send(Box::new(RegisterBrokerAndReElect {}));
         let _ = self.event_tx.send(Box::new(Startup { tx }));
-        rx.recv();
+        let _ = rx.recv();
     }
 }
