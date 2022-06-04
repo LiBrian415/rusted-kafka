@@ -156,7 +156,7 @@ impl PartitionStateMachine {
                 HashMap::new()
             }
             ONLINE_PARTITION => {
-                let mut context = self.context.borrow_mut();
+                let context = self.context.borrow_mut();
                 let mut uninitial_partitions = valid_partitions.clone();
                 uninitial_partitions.retain(|partition| {
                     context.partition_states.get(&partition).unwrap().state() == NEW_PARTITION
@@ -207,6 +207,10 @@ impl PartitionStateMachine {
             );
         }
 
+        for (partition, replicas) in replicas_per_partition.iter() {
+            println!("partition: {:?}, replcias: {:?}", partition, replicas);
+        }
+
         let mut partitions_with_live_replicas: HashMap<TopicPartition, Vec<u32>> = HashMap::new();
         for (partition, replicas) in replicas_per_partition.iter() {
             let mut live_replicas = Vec::new();
@@ -224,11 +228,11 @@ impl PartitionStateMachine {
         for (partition, replicas) in partitions_with_live_replicas {
             let leader_and_isr = LeaderAndIsr::init(
                 replicas[0].clone(),
-                replicas,
+                replicas.clone(),
                 context.epoch,
                 INITIAL_PARTITION_EPOCH,
             );
-
+            println!("live_replicas: {:?}, {:?}", partition, replicas);
             match self.zk_client.create_topic_partition_state(HashMap::from([(
                 partition.clone(),
                 leader_and_isr.clone(),
@@ -237,7 +241,6 @@ impl PartitionStateMachine {
                 Ok(_) => {
                     context
                         .put_partition_leadership_info(partition.clone(), leader_and_isr.clone());
-                    // TODO: send leaderAndIsr request
                     let mut batch = self.request_batch.borrow_mut();
                     batch.add_leader_and_isr_request_for_brokers(
                         leader_and_isr.isr.clone(),

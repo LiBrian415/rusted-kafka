@@ -239,6 +239,10 @@ impl Controller {
                 return;
             }
         };
+        println!(
+            "Added replica len: {}",
+            added_partition_replica_assignment.len()
+        );
 
         // for topic in deleted_topics {
         //     context.remove_topic(topic);

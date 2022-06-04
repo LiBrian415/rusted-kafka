@@ -13,7 +13,8 @@ use crate::{
 };
 
 use super::{
-    channel_manager::ControllerChannelManager, controller_context::ControllerContext,
+    channel_manager::{ControllerBrokerRequestBatch, ControllerChannelManager},
+    controller_context::ControllerContext,
     event_manager::ControllerEventManager,
 };
 
@@ -28,6 +29,7 @@ pub struct ReplicaStateMachine {
     zk_client: Arc<KafkaZkClient>,
     channel_manager: Rc<RefCell<ControllerChannelManager>>,
     event_manager: ControllerEventManager,
+    request_batch: RefCell<ControllerBrokerRequestBatch>,
 }
 
 impl ReplicaStateMachine {
@@ -38,12 +40,18 @@ impl ReplicaStateMachine {
         channel_manager: Rc<RefCell<ControllerChannelManager>>,
         event_manager: ControllerEventManager,
     ) -> ReplicaStateMachine {
+        let request_batch = RefCell::new(ControllerBrokerRequestBatch::init(
+            channel_manager.clone(),
+            broker_id,
+            event_manager.clone(),
+        ));
         Self {
             broker_id,
             context,
             zk_client,
             channel_manager,
             event_manager,
+            request_batch,
         }
     }
 
@@ -81,11 +89,14 @@ impl ReplicaStateMachine {
         replicas: HashSet<PartitionReplica>,
         target_state: Arc<dyn ReplicaState>,
     ) {
-        if !replicas.is_empty() {
+        if replicas.is_empty() {
             return;
         }
 
-        //println!("{:?}", replicas);
+        let mut batch = self.request_batch.borrow_mut();
+        batch.new_batch();
+        std::mem::drop(batch);
+
         let mut rid_to_replicas: HashMap<u32, HashSet<PartitionReplica>> = HashMap::new();
         for replica in replicas.iter() {
             match rid_to_replicas.get_mut(&replica.replica) {
@@ -104,9 +115,9 @@ impl ReplicaStateMachine {
             self.do_handle_state_change(rid, grouped_replicas, target_state.clone());
         }
 
-        // println!("{:?}", self.context.borrow().replica_states.keys());
-
-        // TODO: send request
+        let batch = self.request_batch.borrow();
+        let context = self.context.borrow();
+        batch.send_request_to_brokers(context.epoch);
     }
 
     fn do_handle_state_change(
@@ -127,14 +138,21 @@ impl ReplicaStateMachine {
             .collect();
         let valid_replicas =
             context.check_valid_replica_state_change(replicas, target_state.clone());
+        std::mem::drop(context);
 
         match target_state.state() {
             NEW_REPLICA => {
+                let mut context = self.context.borrow_mut();
+                let mut batch = self.request_batch.borrow_mut();
                 for replica in valid_replicas.iter() {
                     match context.partition_leadership_info.get(&replica.partition) {
                         Some(leader_and_isr) => {
                             if leader_and_isr.leader != rid {
-                                // TODO:Add leaderAndIsr requests
+                                batch.add_leader_and_isr_request_for_brokers(
+                                    vec![rid],
+                                    replica.partition.clone(),
+                                    leader_and_isr.clone(),
+                                );
                                 context.put_replica_state(replica.clone(), Arc::new(NewReplica {}));
                             }
                         }
@@ -145,6 +163,7 @@ impl ReplicaStateMachine {
                 }
             }
             ONLINE_REPLICA => {
+                let mut context = self.context.borrow_mut();
                 for replica in valid_replicas.iter() {
                     let curr_state = context.replica_states.get(replica).unwrap();
 
@@ -171,9 +190,14 @@ impl ReplicaStateMachine {
                             }
                         }
                         _ => {
+                            let mut batch = self.request_batch.borrow_mut();
                             match context.partition_leadership_info.get(&replica.partition) {
                                 Some(leader_and_isr) => {
-                                    // TODO: add request
+                                    batch.add_leader_and_isr_request_for_brokers(
+                                        vec![rid],
+                                        replica.partition.clone(),
+                                        leader_and_isr.clone(),
+                                    );
                                 }
                                 None => {}
                             }
@@ -184,6 +208,8 @@ impl ReplicaStateMachine {
             }
             OFFLINE_REPLICA => {
                 // Send StopReplicaRequest
+                let mut context = self.context.borrow_mut();
+                let mut batch = self.request_batch.borrow_mut();
                 let partitions = valid_replicas
                     .iter()
                     .map(|replica| replica.partition.clone())
@@ -191,6 +217,13 @@ impl ReplicaStateMachine {
                 let updated_leader_and_isr =
                     self.remove_replica_from_isr_of_partitions(rid, partitions);
                 for (partition, leader_and_isr) in updated_leader_and_isr {
+                    let mut recipients = context.partition_replica_assignment(partition.clone());
+                    recipients.retain(|id| *id != rid);
+                    batch.add_leader_and_isr_request_for_brokers(
+                        recipients,
+                        partition.clone(),
+                        leader_and_isr.clone(),
+                    );
                     context.put_replica_state(
                         PartitionReplica::init(partition, rid),
                         Arc::new(OfflineReplica {}),
@@ -220,11 +253,15 @@ impl ReplicaStateMachine {
     ) -> HashMap<TopicPartition, LeaderAndIsr> {
         let leader_and_isrs = self.get_topic_partition_states(partitions);
         let mut leader_and_isrs_with_replica = leader_and_isrs.clone();
+        let mut leader_and_isrs_without_replica = leader_and_isrs.clone();
         leader_and_isrs_with_replica.retain(|_, leader_and_isr| leader_and_isr.isr.contains(&rid));
+        for (partition, _) in leader_and_isrs_with_replica.iter() {
+            leader_and_isrs_without_replica.remove(partition);
+        }
 
         for leader_and_isr in leader_and_isrs_with_replica.values_mut() {
             if rid == leader_and_isr.leader {
-                leader_and_isr.leader = 0;
+                leader_and_isr.leader = 0; // NO LEADER
             }
             if leader_and_isr.isr.len() != 1 {
                 leader_and_isr.isr.retain(|id| *id != rid);
@@ -237,6 +274,7 @@ impl ReplicaStateMachine {
             context.epoch_zk_version,
         );
 
+        leader_and_isrs_with_replica.extend(leader_and_isrs_without_replica);
         for (partition, leader_and_isr) in leader_and_isrs_with_replica.iter() {
             context.put_partition_leadership_info(partition.clone(), leader_and_isr.clone());
         }

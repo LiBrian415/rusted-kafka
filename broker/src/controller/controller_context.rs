@@ -241,7 +241,6 @@ impl ControllerContext {
         &self,
         partitions: Vec<TopicPartition>,
     ) -> HashSet<PartitionReplica> {
-        // return TopicPartition, replica
         let mut result_replicas: HashSet<PartitionReplica> = HashSet::new();
         for partition in partitions {
             let replica_assignment = self.partition_assignments.get(&partition.topic);
@@ -415,7 +414,7 @@ impl ControllerContext {
         state: Arc<dyn ReplicaState>,
     ) {
         match self.replica_states.get_mut(&replica) {
-            Some(old_state) => *old_state = state,
+            Some(_) => {}
             None => {
                 self.replica_states.insert(replica, state);
             }
