@@ -99,14 +99,6 @@ impl PartitionStateMachine {
         }
         let mut batch = self.request_batch.borrow_mut();
         batch.new_batch();
-        batch.add_leader_and_isr_request_for_brokers(
-            vec![0],
-            partitions
-                .get(&TopicPartition::init("greeting", 0))
-                .unwrap()
-                .clone(),
-            LeaderAndIsr::init(0, vec![0], 0, 0),
-        );
         std::mem::drop(batch);
         let result = self.do_handle_state_change(partitions, target_state);
 

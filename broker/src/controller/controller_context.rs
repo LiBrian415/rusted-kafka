@@ -161,7 +161,10 @@ impl ControllerContext {
                 *assignments = new_assignment;
                 // TODO: updatePreferredReplicaImbalanceMetric?
             }
-            None => {}
+            None => {
+                self.partition_assignments
+                    .insert(partition.topic, new_assignment);
+            }
         }
     }
 

@@ -239,10 +239,6 @@ impl Controller {
                 return;
             }
         };
-        println!(
-            "Added replica len: {}",
-            added_partition_replica_assignment.len()
-        );
 
         // for topic in deleted_topics {
         //     context.remove_topic(topic);
@@ -253,6 +249,11 @@ impl Controller {
             .map(|id_assignment| {
                 let assignment = id_assignment.assignment.clone();
                 for (partition, new_assignment) in assignment {
+                    println!(
+                        "partition: {:?} with replicas {:?}",
+                        partition,
+                        new_assignment.partitions.get(&partition).unwrap()
+                    );
                     context.update_partition_full_replica_assignment(partition, new_assignment);
                 }
             })
