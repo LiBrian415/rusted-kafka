@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Eq, PartialEq, Hash, Clone)]
+#[derive(Serialize, Deserialize, Eq, PartialEq, Hash, Clone, Debug)]
 pub struct TopicPartition {
     pub topic: String,
     pub partition: u32,
@@ -68,6 +68,21 @@ impl LeaderAndIsr {
             isr,
             controller_epoch,
             leader_epoch,
+        }
+    }
+}
+
+#[derive(Eq, PartialEq, Hash, Clone, Debug)]
+pub struct PartitionReplica {
+    pub partition: TopicPartition,
+    pub replica: u32,
+}
+
+impl PartitionReplica {
+    pub fn init(partition: TopicPartition, replica: u32) -> PartitionReplica {
+        PartitionReplica {
+            partition: partition,
+            replica: replica,
         }
     }
 }

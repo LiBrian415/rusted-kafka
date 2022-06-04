@@ -1,23 +1,36 @@
+use core::time;
 use std::{
+    collections::HashMap,
     error::Error,
     net::{SocketAddr, ToSocketAddrs},
-    sync::{mpsc::Sender, Arc},
+    sync::{mpsc::Sender, Arc, RwLock},
+    thread,
+    time::Duration,
 };
 
 use async_trait::async_trait;
-use tokio::sync::mpsc::Receiver;
-use tonic::{transport::Server, Status};
+use tokio::sync::mpsc::{self, Receiver};
+use tokio_stream::wrappers::ReceiverStream;
+use tonic::{transport::Server, Response, Status};
 
 use crate::{
     broker::{
         broker_server::{Broker, BrokerServer},
-        ConsumerInput, ConsumerOutput, ProducerInput, Void,
+        ConsumerInput, ConsumerOutput, CreateInput, LeaderAndIsr as RpcLeaderAndIsr, ProducerInput,
+        TopicPartition as RpcTopicPartition, TopicPartitionLeaderInput, Void,
     },
-    common::topic_partition::TopicPartition,
-    zk::zk_client::KafkaZkClient,
+    common::{
+        broker::BrokerInfo,
+        topic_partition::{LeaderAndIsr, TopicPartition},
+    },
+    controller::controller_worker::ControllerWorker,
+    zk::{zk_client::KafkaZkClient, zk_watcher::KafkaZkHandlers},
 };
 
-use super::{fetcher_manager::ReplicaFetcherManager, log_manager::LogManager};
+use super::{
+    fetcher_manager::ReplicaFetcherManager, log_manager::LogManager,
+    replica_manager::ReplicaManager,
+};
 
 fn parse_socket(addr: String) -> Result<SocketAddr, Box<(dyn Error + Send + Sync)>> {
     match addr.to_socket_addrs() {
@@ -30,6 +43,13 @@ fn parse_socket(addr: String) -> Result<SocketAddr, Box<(dyn Error + Send + Sync
             },
         },
         Err(e) => return Err(Box::new(e)),
+    }
+}
+
+fn parse_address(addr: String) -> Result<(String, String), Box<(dyn Error + Send + Sync)>> {
+    match addr.rsplit_once(':') {
+        Some((host, port)) => Ok((host.to_owned(), port.to_owned())),
+        None => Ok((addr, "".to_owned())),
     }
 }
 
@@ -53,7 +73,9 @@ async fn wait_shutdown(receiver: Option<Receiver<()>>) {
 
 pub struct KafkaServer;
 struct BrokerStream {
-    logManager: Arc<LogManager>,
+    zk_client: Arc<KafkaZkClient>,
+    controller: ControllerWorker,
+    replica_manager: Arc<ReplicaManager>,
 }
 
 impl KafkaServer {
@@ -65,12 +87,38 @@ impl KafkaServer {
     ) -> Result<(), Box<(dyn Error + Send + Sync)>> {
         let addr = parse_socket(addrs[this].to_owned())?;
 
-        // let zkClient = Arc::new(KafkaZkClient::init());
+        let zk_client = Arc::new(KafkaZkClient::init(
+            "localhost:2181",
+            Duration::from_secs(3),
+        )?);
+        zk_client.cleanup();
+        zk_client.create_top_level_paths();
 
-        let logManager = Arc::new(LogManager::init());
-        // let fetchManager = Arc::new(ReplicaFetcherManager::init(logManager));
+        let broker_id = this as u32;
 
-        let svc = BrokerServer::new(BrokerStream { logManager });
+        // Start controller
+        let (host, port) = match parse_address(addrs[this].clone()) {
+            Ok(r) => r,
+            Err(e) => return Err(e),
+        };
+        let broker_info = BrokerInfo::init(host.as_str(), port.as_str(), broker_id);
+        let broker_epoch = 0;
+        let controller = ControllerWorker::startup(zk_client.clone(), broker_info, broker_epoch);
+        controller.activate().await;
+
+        let log_manager = Arc::new(LogManager::init());
+        let replica_manager = Arc::new(ReplicaManager::init(
+            broker_id,
+            None,
+            log_manager,
+            zk_client.clone(),
+        ));
+
+        let svc = BrokerServer::new(BrokerStream {
+            zk_client,
+            controller,
+            replica_manager,
+        });
         let server = Server::builder().add_service(svc);
 
         let ready_clone = ready.clone();
@@ -96,6 +144,63 @@ impl KafkaServer {
 impl Broker for BrokerStream {
     type consumeStream = tokio_stream::wrappers::ReceiverStream<Result<ConsumerOutput, Status>>;
 
+    async fn set_topic_partition_leader(
+        &self,
+        request: tonic::Request<TopicPartitionLeaderInput>,
+    ) -> Result<tonic::Response<Void>, tonic::Status> {
+        let TopicPartitionLeaderInput {
+            topic_partition,
+            leader_and_isr,
+        } = request.into_inner();
+
+        let RpcTopicPartition { topic, partition } = match topic_partition {
+            Some(tp) => tp,
+            None => return Err(tonic::Status::invalid_argument("Missing TopicPartition")),
+        };
+        let RpcLeaderAndIsr {
+            leader,
+            isr,
+            leader_epoch,
+            controller_epoch,
+        } = match leader_and_isr {
+            Some(lisr) => lisr,
+            None => return Err(tonic::Status::invalid_argument("Missing LeaderAndIsr")),
+        };
+
+        match self.replica_manager.become_leader_or_follower(
+            TopicPartition { topic, partition },
+            LeaderAndIsr {
+                leader,
+                isr,
+                leader_epoch: leader_epoch as u128,
+                controller_epoch: controller_epoch as u128,
+            },
+        ) {
+            Ok(()) => Ok(Response::new(Void {})),
+            Err(e) => Err(tonic::Status::unknown(e.to_string())),
+        }
+    }
+
+    async fn create(
+        &self,
+        request: tonic::Request<CreateInput>,
+    ) -> Result<tonic::Response<Void>, tonic::Status> {
+        let CreateInput { topic_partitions } = request.into_inner();
+
+        let topic_partitions: Vec<(String, u32)> = topic_partitions
+            .iter()
+            .map(|tp| (tp.topic.clone(), tp.partitions))
+            .collect();
+
+        match self.zk_client.create_new_topic(topic_partitions) {
+            Ok(()) => {
+                thread::sleep(time::Duration::from_secs(2));
+                Ok(Response::new(Void {}))
+            }
+            Err(e) => Err(tonic::Status::unknown(e.to_string())),
+        }
+    }
+
     async fn produce(
         &self,
         request: tonic::Request<ProducerInput>,
@@ -108,7 +213,10 @@ impl Broker for BrokerStream {
 
         let tp = TopicPartition::init(topic.as_str(), partition);
 
-        todo!();
+        match self.replica_manager.append_messages(-1, tp, messages).await {
+            Ok(()) => Ok(Response::new(Void {})),
+            Err(e) => Err(tonic::Status::unknown(e.to_string())),
+        }
     }
 
     async fn consume(
@@ -123,6 +231,34 @@ impl Broker for BrokerStream {
 
         let tp = TopicPartition::init(topic.as_str(), partition);
 
+        let fetch_max_bytes = 128;
+
         todo!();
+        // let (tx, rx) = mpsc::channel(fetch_max_bytes as usize);
+
+        // let consume_log_manager = self.log_manager.clone();
+
+        // tokio::spawn(async move {
+        //     if let Some(log) = consume_log_manager.get_log(&tp) {
+        //         let messages = log.fetch_messages(offset, fetch_max_bytes, true);
+        //         match tx
+        //             .send(Result::<_, Status>::Ok(ConsumerOutput {
+        //                 messages,
+        //                 end: true,
+        //             }))
+        //             .await
+        //         {
+        //             Ok(_) => {
+        //                 // item (server response) was queued to be send to client
+        //             }
+        //             Err(_item) => {
+        //                 // output_stream was build from rx and both are dropped
+        //             }
+        //         }
+        //     }
+        // });
+
+        // let output_stream = ReceiverStream::new(rx);
+        // Ok(Response::new(output_stream as Self::consumeStream))
     }
 }

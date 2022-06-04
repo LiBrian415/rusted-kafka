@@ -1,12 +1,16 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use crate::common::{
     broker::BrokerInfo,
-    topic_partition::{LeaderAndIsr, ReplicaAssignment, TopicPartition},
+    topic_partition::{LeaderAndIsr, PartitionReplica, ReplicaAssignment, TopicPartition},
 };
 
+use super::{partition_state_machine::PartitionState, replica_state_machine::ReplicaState};
+
 pub struct ControllerContext {
-    // offline_partition_cnt: u32,
     pub shuttingdown_broker_ids: HashSet<u32>,
     pub live_brokers: HashSet<BrokerInfo>,
     live_broker_epochs: HashMap<u32, i64>, // topic id -> epoch
@@ -16,15 +20,45 @@ pub struct ControllerContext {
     pub partitions_being_reassigned: HashSet<TopicPartition>,
     topic_ids: HashMap<String, u32>,   // topic name -> topic id
     topic_names: HashMap<u32, String>, // topic id -> topic name
-    partition_assignments: HashMap<String, ReplicaAssignment>, // topic name -> assignment
-    partition_leadership_info: HashMap<TopicPartition, (LeaderAndIsr, u128)>, // topicPartition -> (leaderAndIsr, epoch)
-    // replica_states: HashMap<>,
+    pub partition_assignments: HashMap<String, ReplicaAssignment>, // topic name -> assignment
+    pub partition_leadership_info: HashMap<TopicPartition, LeaderAndIsr>, // topicPartition -> leaderAndIsr
+    pub partition_states: HashMap<TopicPartition, Arc<dyn PartitionState>>,
+    pub replica_states: HashMap<PartitionReplica, Arc<dyn ReplicaState>>,
     topics_to_be_deleted: HashSet<String>,
 }
 
 impl ControllerContext {
     pub fn init() -> ControllerContext {
-        todo!();
+        let shuttingdown_broker_ids = HashSet::new();
+        let live_brokers = HashSet::new();
+        let live_broker_epochs = HashMap::new();
+        let epoch = 0;
+        let epoch_zk_version = 0;
+        let all_topics = HashSet::new();
+        let partitions_being_reassigned = HashSet::new();
+        let topic_ids = HashMap::new();
+        let topic_names = HashMap::new();
+        let partition_assignments = HashMap::new();
+        let partition_leadership_info = HashMap::new();
+        let topics_to_be_deleted = HashSet::new();
+        let partition_states = HashMap::new();
+        let replica_states = HashMap::new();
+        Self {
+            shuttingdown_broker_ids,
+            live_brokers,
+            live_broker_epochs,
+            epoch,
+            epoch_zk_version,
+            all_topics,
+            partitions_being_reassigned,
+            topic_ids,
+            topic_names,
+            partition_assignments,
+            partition_leadership_info,
+            topics_to_be_deleted,
+            partition_states,
+            replica_states,
+        }
     }
 
     pub fn live_broker_ids(&self) -> Vec<u32> {
@@ -156,11 +190,11 @@ impl ControllerContext {
         &mut self,
         partition: TopicPartition,
         leader_isr: LeaderAndIsr,
-        epoch: u128,
+        // epoch: u128,
     ) {
         match self.partition_leadership_info.get_mut(&partition) {
             Some(info) => {
-                *info = (leader_isr, epoch);
+                *info = leader_isr;
                 // TODO: updatePreferredReplicaImbalanceMetric?
             }
             None => {}
@@ -206,9 +240,9 @@ impl ControllerContext {
     pub fn replicas_for_partition(
         &self,
         partitions: Vec<TopicPartition>,
-    ) -> HashSet<(TopicPartition, u32)> {
+    ) -> HashSet<PartitionReplica> {
         // return TopicPartition, replica
-        let mut result_replicas: HashSet<(TopicPartition, u32)> = HashSet::new();
+        let mut result_replicas: HashSet<PartitionReplica> = HashSet::new();
         for partition in partitions {
             let replica_assignment = self.partition_assignments.get(&partition.topic);
             if replica_assignment.is_none() {
@@ -222,7 +256,7 @@ impl ControllerContext {
             }
 
             for replica in replicas.unwrap() {
-                result_replicas.insert((partition.clone(), replica.clone()));
+                result_replicas.insert(PartitionReplica::init(partition.clone(), replica.clone()));
             }
         }
 
@@ -233,14 +267,15 @@ impl ControllerContext {
         self.partition_leadership_info.keys().cloned().collect()
     }
 
-    pub fn replicas_on_brokers(&self, broker_ids: HashSet<u32>) -> HashSet<(TopicPartition, u32)> {
-        let mut result_replicas: HashSet<(TopicPartition, u32)> = HashSet::new();
+    pub fn replicas_on_brokers(&self, broker_ids: HashSet<u32>) -> HashSet<PartitionReplica> {
+        let mut result_replicas: HashSet<PartitionReplica> = HashSet::new();
         for id in broker_ids {
             for (_, assignment) in self.partition_assignments.iter() {
                 for (partition, replicas) in assignment.partitions.iter() {
                     for replica in replicas {
                         if replica.clone() == id {
-                            result_replicas.insert((partition.clone(), replica.clone()));
+                            result_replicas
+                                .insert(PartitionReplica::init(partition.clone(), replica.clone()));
                         }
                     }
                 }
@@ -253,7 +288,7 @@ impl ControllerContext {
     pub fn partitions_with_offline_leader(&mut self) -> HashSet<TopicPartition> {
         let mut partition_leadership_info = self.partition_leadership_info.clone();
         partition_leadership_info.retain(|partition, leader_and_isr| {
-            !self.is_replica_online(leader_and_isr.0.leader, partition.clone())
+            !self.is_replica_online(leader_and_isr.leader, partition.clone())
         });
 
         self.partition_leadership_info = partition_leadership_info.clone();
@@ -263,5 +298,127 @@ impl ControllerContext {
 
     pub fn is_replica_online(&self, broker_id: u32, _partition: TopicPartition) -> bool {
         self.live_broker_ids().contains(&broker_id)
+    }
+
+    pub fn put_partition_state(
+        &mut self,
+        partition: TopicPartition,
+        state: Arc<dyn PartitionState>,
+    ) {
+        match self.partition_states.get_mut(&partition) {
+            Some(entry) => {
+                *entry = state;
+            }
+            None => {
+                self.partition_states.insert(partition, state);
+            }
+        }
+    }
+
+    pub fn put_partition_state_if_not_exists(
+        &mut self,
+        partition: TopicPartition,
+        state: Arc<dyn PartitionState>,
+    ) {
+        match self.partition_states.get_mut(&partition) {
+            Some(_) => {}
+            None => {
+                self.partition_states.insert(partition, state);
+            }
+        }
+    }
+
+    pub fn get_partitions(&self, states: Vec<u32>) -> HashSet<TopicPartition> {
+        let mut results = HashSet::new();
+        for (partition, state) in self.partition_states.iter() {
+            if states.contains(&state.state()) {
+                results.insert(partition.clone());
+            }
+        }
+
+        results
+    }
+
+    pub fn check_valid_partition_state_change(
+        &self,
+        partitions: HashSet<TopicPartition>,
+        target_state: Arc<dyn PartitionState>,
+    ) -> Vec<TopicPartition> {
+        let mut valids = Vec::new();
+        for partition in partitions.iter() {
+            if target_state
+                .valid_previous_state()
+                .contains(&self.partition_states.get(partition).unwrap().state())
+            {
+                valids.push(partition.clone());
+            }
+        }
+
+        valids
+    }
+
+    pub fn online_and_offline_replicas(
+        &self,
+    ) -> (HashSet<PartitionReplica>, HashSet<PartitionReplica>) {
+        let mut online_replicas = HashSet::new();
+        let mut offline_replicas = HashSet::new();
+
+        for (_, replica_assignment) in self.partition_assignments.iter() {
+            for (partition, replicas) in replica_assignment.partitions.iter() {
+                for replica in replicas {
+                    if self.is_replica_online(replica.clone(), partition.clone()) {
+                        online_replicas
+                            .insert(PartitionReplica::init(partition.clone(), replica.clone()));
+                    } else {
+                        offline_replicas
+                            .insert(PartitionReplica::init(partition.clone(), replica.clone()));
+                    }
+                }
+            }
+        }
+
+        (online_replicas, offline_replicas)
+    }
+
+    pub fn put_replica_state(&mut self, replica: PartitionReplica, state: Arc<dyn ReplicaState>) {
+        match self.replica_states.get_mut(&replica) {
+            Some(entry) => {
+                *entry = state;
+            }
+            None => {
+                self.replica_states.insert(replica, state);
+            }
+        }
+    }
+
+    pub fn check_valid_replica_state_change(
+        &self,
+        replicas: HashSet<PartitionReplica>,
+        target_state: Arc<dyn ReplicaState>,
+    ) -> Vec<PartitionReplica> {
+        let mut valids = Vec::new();
+        for replica in replicas.iter() {
+            if target_state
+                .valid_previous_state()
+                .contains(&self.replica_states.get(replica).unwrap().state())
+            {
+                valids.push(replica.clone());
+            }
+        }
+
+        valids
+    }
+
+    pub fn put_replica_state_if_not_exists(
+        &mut self,
+        replica: PartitionReplica,
+        state: Arc<dyn ReplicaState>,
+    ) {
+        match self.replica_states.get_mut(&replica) {
+            Some(old_state) => *old_state = state,
+            None => {
+                self.replica_states.insert(replica, state);
+            }
+        }
     }
 }

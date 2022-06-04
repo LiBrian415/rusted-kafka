@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, RwLock},
     time::Duration,
 };
-use zookeeper::{Acl, CreateMode, Stat, ZkError, ZkResult, ZooKeeper};
+use zookeeper::{Acl, CreateMode, Stat, ZkError, ZkResult, ZooKeeper, ZooKeeperExt};
 
 use super::zk_data::{
     IsrChangeNotificationSequenceZNode, IsrChangeNotificationZNode, PersistentZkPaths,
@@ -62,6 +62,15 @@ impl KafkaZkClient {
             .paths
             .iter()
             .map(|path| self.check_persistent_path(path))
+            .collect();
+    }
+
+    pub fn cleanup(&self) {
+        let persistent_path = PersistentZkPaths::init();
+        let _: Vec<ZkResult<()>> = persistent_path
+            .paths
+            .iter()
+            .map(|path| self.client.delete_recursive(path))
             .collect();
     }
 
@@ -135,7 +144,7 @@ impl KafkaZkClient {
     }
 
     // Controller
-
+    // TODO: double check
     pub fn register_controller_and_increment_controller_epoch(
         &self,
         controller_id: u32,
@@ -177,6 +186,7 @@ impl KafkaZkClient {
                     ZkError::BadVersion => match self.check_epoch(new_controller_epoch) {
                         Ok(result) => {
                             correct_epoch = result;
+                            correct_controller = true;
                         }
                         Err(e) => return Err(e),
                     },
@@ -187,6 +197,7 @@ impl KafkaZkClient {
                 ZkError::NodeExists => match self.check_controller(controller_id) {
                     Ok(result) => {
                         correct_controller = result;
+                        correct_epoch = true;
                     }
                     Err(e) => return Err(e),
                 },
@@ -524,6 +535,45 @@ impl KafkaZkClient {
         Ok(brokers)
     }
     // Topic + Partition
+
+    pub fn create_new_topic(&self, topics_and_num_partitions: Vec<(String, u32)>) -> ZkResult<()> {
+        for (topic, num_partition) in topics_and_num_partitions.iter() {
+            let path = TopicZNode::path(topic);
+            let mut partitions: HashMap<TopicPartition, Vec<u32>> = HashMap::new();
+            partitions.insert(TopicPartition::init(topic, 0), vec![0]);
+            let data = ReplicaAssignment::init(partitions, HashMap::new(), HashMap::new());
+            match self.client.create(
+                path.as_str(),
+                TopicZNode::encode(data),
+                Acl::open_unsafe().clone(),
+                CreateMode::Persistent,
+            ) {
+                Ok(_) => {}
+                Err(e) => return Err(e),
+            }
+
+            let _ = match self.create_topic_partitions(vec![topic.to_string()])[0] {
+                Ok(_) => {}
+                Err(e) => return Err(e),
+            };
+            let mut new_partitions = Vec::new();
+            for i in 0..*num_partition {
+                let partition = TopicPartition::init(topic.as_str(), i);
+                new_partitions.push(partition);
+            }
+            let resp = self.create_topic_partition(new_partitions);
+            for r in resp {
+                match r {
+                    Ok(_) => {}
+                    Err(e) => {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
 
     pub fn get_all_topics(&self, register_watch: bool) -> ZkResult<HashSet<String>> {
         let path = TopicsZNode::path();

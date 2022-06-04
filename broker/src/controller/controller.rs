@@ -10,7 +10,8 @@ use std::{
 
 use super::{
     change_handlers::{
-        BrokerChangeHandler, BrokerModificationHandler, ControllerChangeHandler, TopicChangeHandler,
+        get_child_change_handlers, BrokerChangeHandler, BrokerModificationHandler,
+        ControllerChangeHandler, TopicChangeHandler,
     },
     constants::{
         EVENT_BROKER_CHANGE, EVENT_BROKER_MODIFICATION, EVENT_CONTROLLER_CHANGE,
@@ -25,7 +26,7 @@ use super::{
     replica_state_machine::{NewReplica, OfflineReplica, OnlineReplica},
 };
 use crate::{
-    common::topic_partition::TopicIdReplicaAssignment,
+    common::topic_partition::{PartitionReplica, TopicIdReplicaAssignment},
     controller::controller_context::ControllerContext,
 };
 use crate::{
@@ -72,7 +73,10 @@ impl Controller {
     // process functions for different events
     pub fn process(&self, event: Box<dyn ControllerEvent>) {
         match event.state() {
-            EVENT_STARTUP => self.process_startup(),
+            EVENT_STARTUP => {
+                self.process_startup();
+                event.complete();
+            }
             EVENT_CONTROLLER_CHANGE => self.process_controller_change(),
             EVENT_RE_ELECT => self.process_re_elect(),
             EVENT_BROKER_CHANGE => self.process_broker_change(),
@@ -104,12 +108,14 @@ impl Controller {
 
     /***** Process Functions Entry Points for Events Start *****/
     fn process_startup(&self) {
+        println!("process startup");
         let _ = self
             .zk_client
             .register_znode_change_handler_and_check_existence(Arc::new(ControllerChangeHandler {
                 event_manager: self.em.clone(),
             }));
         self.elect();
+        println!("processed startup");
     }
 
     fn process_broker_modification(&self, broker_id: u32) {
@@ -143,7 +149,9 @@ impl Controller {
 
     fn process_re_elect(&self) {
         self.maybe_resign();
+        println!("maybe resign done");
         self.elect();
+        println!("elect done");
     }
 
     fn process_broker_change(&self) {
@@ -203,6 +211,7 @@ impl Controller {
     }
 
     fn process_topic_change(&self) {
+        println!("start process topic change");
         if !self.is_active() {
             return;
         }
@@ -245,6 +254,7 @@ impl Controller {
             })
             .collect();
 
+        std::mem::drop(context);
         let mut partitions = HashSet::new();
         if !added_partition_replica_assignment.is_empty() {
             let _: Vec<()> = added_partition_replica_assignment
@@ -260,7 +270,10 @@ impl Controller {
 
     fn process_register_broker_and_reelect(&self) {
         match self.zk_client.register_broker(self.broker_info.clone()) {
-            Ok(_) => self.process_re_elect(),
+            Ok(_) => {
+                self.process_re_elect();
+                println!("broker has been registerd and reelct is done");
+            }
             Err(_) => {
                 return;
             }
@@ -343,7 +356,9 @@ impl Controller {
                 std::mem::drop(context);
                 std::mem::drop(active_id);
 
+                println!("controller failover start");
                 self.controller_failover();
+                println!("controller failover done");
             }
             Err(_) => {
                 // TODO: handle ControllerMovedException and others
@@ -355,33 +370,15 @@ impl Controller {
     // invoked when this broker is elected as the new controller
     fn controller_failover(&self) {
         // register watchers to get broker/topic callbacks
-        let _: Vec<()> = self
-            .zk_client
-            .handlers
-            .child_change_handlers
-            .read()
-            .unwrap()
+        let _: Vec<()> = get_child_change_handlers(self.em.clone())
             .iter()
-            .map(|(_, handler)| {
+            .map(|handler| {
                 self.zk_client
                     .register_znode_child_change_handler(handler.clone())
             })
             .collect();
 
-        let _: Vec<()> = self
-            .zk_client
-            .handlers
-            .change_handlers
-            .read()
-            .unwrap()
-            .iter()
-            .map(|(_, handler)| {
-                let _ = self
-                    .zk_client
-                    .register_znode_change_handler_and_check_existence(handler.clone());
-            })
-            .collect();
-
+        println!("child change handler registered");
         // initialize the controller's context that holds cache objects for current topics, live brokers
         // leaders for all existing partitions
         let context = self.context.borrow();
@@ -389,7 +386,9 @@ impl Controller {
             .zk_client
             .delete_isr_change_notifications(context.epoch_zk_version);
         std::mem::drop(context);
+        println!("deleted isr change notification");
         self.initialize_control_context();
+        println!("initialized controller context");
 
         // Send UpdateMetadata after the context is initialized and before the state machines startup.
         // reason: brokers need to receive the list of live brokers from UpdateMetadata before they can
@@ -403,6 +402,7 @@ impl Controller {
             HashSet::new(),
         );
 
+        std::mem::drop(context);
         self.replica_state_machine.startup();
         self.partition_state_machine.startup();
         // if any unexpected errors/ resigns as the current controller
@@ -428,7 +428,7 @@ impl Controller {
             }
         }
 
-        // TODO: Here the source code register the partitionModification handlers with zk
+        // Here the source code register the partitionModification handlers with zk
 
         match self
             .zk_client
@@ -477,11 +477,7 @@ impl Controller {
         match self.zk_client.get_topic_partition_states(partitions) {
             Ok(leader_isr_and_epochs) => {
                 for (partition, leader_isr) in leader_isr_and_epochs {
-                    context.put_partition_leadership_info(
-                        partition,
-                        leader_isr.clone(),
-                        leader_isr.controller_epoch,
-                    );
+                    context.put_partition_leadership_info(partition, leader_isr.clone());
                 }
             }
             Err(_) => {}
@@ -615,16 +611,17 @@ impl Controller {
 
         let context = self.context.borrow();
         let replicas = context.replicas_for_partition(partitions);
+        std::mem::drop(context);
 
         self.partition_state_machine
-            .handle_state_change(new_partitions.clone(), Box::new(NewPartition {}));
+            .handle_state_change(new_partitions.clone(), Arc::new(NewPartition {}));
         self.replica_state_machine
-            .handle_state_change(replicas.clone(), Box::new(NewReplica {}));
+            .handle_state_change(replicas.clone(), Arc::new(NewReplica {}));
         self.partition_state_machine
-            .handle_state_change(new_partitions, Box::new(OnlinePartition {}));
+            .handle_state_change(new_partitions, Arc::new(OnlinePartition {}));
 
         self.replica_state_machine
-            .handle_state_change(replicas, Box::new(OnlineReplica {}));
+            .handle_state_change(replicas, Arc::new(OnlineReplica {}));
     }
 
     fn on_broker_startup(&self, broker: Vec<u32>) {
@@ -646,7 +643,7 @@ impl Controller {
         let all_replias_on_new_brokers = context.replicas_on_brokers(broker_set.clone());
 
         self.replica_state_machine
-            .handle_state_change(all_replias_on_new_brokers, Box::new(OnlineReplica {}));
+            .handle_state_change(all_replias_on_new_brokers, Arc::new(OnlineReplica {}));
 
         self.partition_state_machine
             .trigger_online_partition_state_change();
@@ -663,23 +660,23 @@ impl Controller {
         self.unregister_broker_modification_handler(brokers.into_iter().collect());
     }
 
-    fn on_replicas_become_offline(&self, replicas: HashSet<(TopicPartition, u32)>) {
+    fn on_replicas_become_offline(&self, replicas: HashSet<PartitionReplica>) {
         let partitions_with_offline_leader =
             self.context.borrow_mut().partitions_with_offline_leader();
         self.partition_state_machine.handle_state_change(
             partitions_with_offline_leader,
-            Box::new(OfflinePartition {}),
+            Arc::new(OfflinePartition {}),
         );
 
         self.partition_state_machine
             .trigger_online_partition_state_change();
         self.replica_state_machine
-            .handle_state_change(replicas, Box::new(OfflineReplica {}));
+            .handle_state_change(replicas, Arc::new(OfflineReplica {}));
     }
 
     fn on_replica_election(&self, partitions: HashSet<TopicPartition>) {
         self.partition_state_machine
-            .handle_state_change(partitions, Box::new(OnlinePartition {}));
+            .handle_state_change(partitions, Arc::new(OnlinePartition {}));
     }
 }
 

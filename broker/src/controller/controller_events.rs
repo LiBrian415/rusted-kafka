@@ -1,5 +1,5 @@
 use crate::common::topic_partition::TopicPartition;
-use std::{any::Any, collections::HashSet};
+use std::{any::Any, collections::HashSet, sync::mpsc::SyncSender};
 
 // https://stackoverflow.com/questions/33687447/how-to-get-a-reference-to-a-concrete-type-from-a-trait-object
 use super::constants::{
@@ -11,6 +11,7 @@ use super::constants::{
 pub trait ControllerEvent: Send + Sync {
     fn as_any(&self) -> &dyn Any;
     fn state(&self) -> u32;
+    fn complete(&self) -> ();
 }
 
 pub struct TopicChange {}
@@ -22,9 +23,15 @@ impl ControllerEvent for TopicChange {
     fn state(&self) -> u32 {
         EVENT_TOPIC_CHANGE
     }
+
+    fn complete(&self) -> () {
+        todo!();
+    }
 }
 
-pub struct Startup {}
+pub struct Startup {
+    pub tx: SyncSender<()>,
+}
 impl ControllerEvent for Startup {
     fn as_any(&self) -> &dyn Any {
         self
@@ -32,6 +39,10 @@ impl ControllerEvent for Startup {
 
     fn state(&self) -> u32 {
         EVENT_STARTUP
+    }
+
+    fn complete(&self) -> () {
+        let _ = self.tx.send(());
     }
 }
 
@@ -46,6 +57,10 @@ impl ControllerEvent for BrokerModification {
     fn state(&self) -> u32 {
         EVENT_BROKER_MODIFICATION
     }
+
+    fn complete(&self) -> () {
+        todo!();
+    }
 }
 
 pub struct BrokerChange {}
@@ -56,6 +71,10 @@ impl ControllerEvent for BrokerChange {
 
     fn state(&self) -> u32 {
         EVENT_BROKER_CHANGE
+    }
+
+    fn complete(&self) -> () {
+        todo!();
     }
 }
 
@@ -68,6 +87,10 @@ impl ControllerEvent for ControllerChange {
     fn state(&self) -> u32 {
         EVENT_CONTROLLER_CHANGE
     }
+
+    fn complete(&self) -> () {
+        todo!();
+    }
 }
 
 pub struct ReElect {}
@@ -78,6 +101,10 @@ impl ControllerEvent for ReElect {
 
     fn state(&self) -> u32 {
         EVENT_RE_ELECT
+    }
+
+    fn complete(&self) -> () {
+        todo!();
     }
 }
 
@@ -92,6 +119,10 @@ impl ControllerEvent for ReplicaLeaderElection {
     fn state(&self) -> u32 {
         EVENT_REPLICA_LEADER_ELECTION
     }
+
+    fn complete(&self) -> () {
+        todo!();
+    }
 }
 
 pub struct RegisterBrokerAndReElect {}
@@ -103,6 +134,10 @@ impl ControllerEvent for RegisterBrokerAndReElect {
     fn state(&self) -> u32 {
         EVENT_REGISTER_BROKER_AND_REELECT
     }
+
+    fn complete(&self) -> () {
+        todo!();
+    }
 }
 
 pub struct IsrChangeNotification {}
@@ -113,5 +148,9 @@ impl ControllerEvent for IsrChangeNotification {
 
     fn state(&self) -> u32 {
         EVENT_ISR_CHANGE_NOTIFICATION
+    }
+
+    fn complete(&self) -> () {
+        todo!();
     }
 }

@@ -3,7 +3,14 @@ use std::error::Error;
 use tokio::sync::Mutex;
 use tonic::{transport::Channel, Streaming};
 
-use crate::broker::{broker_client::BrokerClient, ConsumerInput, ConsumerOutput, ProducerInput};
+use crate::{
+    broker::{
+        broker_client::BrokerClient, ConsumerInput, ConsumerOutput, CreateInput,
+        LeaderAndIsr as RpcLeaderAndIsr, ProducerInput, TopicPartition as RpcTopicPartition,
+        TopicPartitionLeaderInput, TopicPartitions,
+    },
+    common::topic_partition::{LeaderAndIsr, TopicPartition},
+};
 
 pub struct KafkaClient {
     addr: String,
@@ -11,7 +18,8 @@ pub struct KafkaClient {
 }
 
 impl KafkaClient {
-    pub fn new(addr: String) -> Self {
+    pub fn new(host: String, port: String) -> Self {
+        let addr = format!("http://{}:{}", host, port);
         Self {
             addr,
             client: Mutex::new(None),
@@ -28,6 +36,49 @@ impl KafkaClient {
                 Ok(client)
             }
         }
+    }
+
+    pub async fn set_topic_partition_leader(
+        &self,
+        topic_partition: TopicPartition,
+        leader_and_isr: LeaderAndIsr,
+    ) -> Result<(), Box<(dyn Error + Send + Sync)>> {
+        let mut client = self.connect().await?;
+        let TopicPartition { topic, partition } = topic_partition;
+        let LeaderAndIsr {
+            leader,
+            isr,
+            leader_epoch,
+            controller_epoch,
+        } = leader_and_isr;
+        client
+            .set_topic_partition_leader(TopicPartitionLeaderInput {
+                topic_partition: Some(RpcTopicPartition { topic, partition }),
+                leader_and_isr: Some(RpcLeaderAndIsr {
+                    leader,
+                    isr,
+                    leader_epoch: leader_epoch as u64,
+                    controller_epoch: controller_epoch as u64,
+                }),
+            })
+            .await?;
+        Ok(())
+    }
+
+    pub async fn create(
+        &self,
+        topic_partitions: Vec<(String, u32)>,
+    ) -> Result<(), Box<(dyn Error + Send + Sync)>> {
+        let mut client = self.connect().await?;
+        let topic_partitions = topic_partitions
+            .iter()
+            .map(|(topic, partitions)| TopicPartitions {
+                topic: topic.to_owned(),
+                partitions: partitions.to_owned(),
+            })
+            .collect();
+        client.create(CreateInput { topic_partitions }).await?;
+        Ok(())
     }
 
     pub async fn produce(
