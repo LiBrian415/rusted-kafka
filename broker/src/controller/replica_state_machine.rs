@@ -5,10 +5,8 @@ use std::{
     sync::Arc,
 };
 
-use zookeeper::recipes::leader;
-
 use crate::{
-    common::topic_partition::{LeaderAndIsr, PartitionReplica, ReplicaAssignment, TopicPartition},
+    common::topic_partition::{LeaderAndIsr, PartitionReplica, TopicPartition},
     zk::zk_client::KafkaZkClient,
 };
 
@@ -208,7 +206,6 @@ impl ReplicaStateMachine {
             }
             OFFLINE_REPLICA => {
                 // Send StopReplicaRequest
-                let mut context = self.context.borrow_mut();
                 let mut batch = self.request_batch.borrow_mut();
                 let partitions = valid_replicas
                     .iter()
@@ -216,6 +213,8 @@ impl ReplicaStateMachine {
                     .collect();
                 let updated_leader_and_isr =
                     self.remove_replica_from_isr_of_partitions(rid, partitions);
+
+                let mut context = self.context.borrow_mut();
                 for (partition, leader_and_isr) in updated_leader_and_isr {
                     let mut recipients = context.partition_replica_assignment(partition.clone());
                     recipients.retain(|id| *id != rid);

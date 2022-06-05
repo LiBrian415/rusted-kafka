@@ -200,7 +200,9 @@ impl ControllerContext {
                 *info = leader_isr;
                 // TODO: updatePreferredReplicaImbalanceMetric?
             }
-            None => {}
+            None => {
+                self.partition_leadership_info.insert(partition, leader_isr);
+            }
         }
     }
 

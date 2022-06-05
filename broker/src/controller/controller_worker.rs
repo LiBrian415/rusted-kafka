@@ -57,10 +57,7 @@ mod controller_test {
     use core::time;
     use std::{sync::Arc, thread, time::Duration};
 
-    use crate::{
-        common::broker::BrokerInfo, controller::controller_events::BrokerChange,
-        zk::zk_client::KafkaZkClient,
-    };
+    use crate::{common::broker::BrokerInfo, zk::zk_client::KafkaZkClient};
 
     use super::ControllerWorker;
 
@@ -110,6 +107,54 @@ mod controller_test {
         controller1.activate();
         controller2.activate();
         controller2.shutdown();
+
+        thread::sleep(time::Duration::from_secs(3));
+    }
+
+    #[test]
+    fn test_topic_change_with_alive_leader() {
+        let client1 = get_client();
+        client1.cleanup();
+        client1.create_top_level_paths();
+        let client2 = get_client();
+
+        // Start controller
+        let broker_info1 = BrokerInfo::init("localhost", "7777", 1);
+        let broker_info2 = BrokerInfo::init("localhost", "6666", 2);
+        let broker_epoch = 0;
+        let controller1 = ControllerWorker::startup(client1.clone(), broker_info1, broker_epoch);
+        let controller2 = ControllerWorker::startup(client2.clone(), broker_info2, broker_epoch);
+        controller1.activate();
+        controller2.activate();
+
+        let _ = client2.create_new_topic("greeting".to_string(), 1, 2);
+        thread::sleep(time::Duration::from_secs(3));
+        controller2.shutdown();
+
+        thread::sleep(time::Duration::from_secs(3));
+    }
+
+    #[test]
+    fn test_topic_change_with_dead_leader() {
+        let client1 = get_client();
+        client1.cleanup();
+        client1.create_top_level_paths();
+        let client2 = get_client();
+
+        // Start controller
+        let broker_info1 = BrokerInfo::init("localhost", "7777", 1);
+        let broker_info2 = BrokerInfo::init("localhost", "6666", 2);
+        let broker_epoch = 0;
+        let controller1 = ControllerWorker::startup(client1.clone(), broker_info1, broker_epoch);
+        let controller2 = ControllerWorker::startup(client2.clone(), broker_info2, broker_epoch);
+
+        // controller2 becomes the controller so that we can kill broker1 (default leader of a partition)
+        controller2.activate();
+        controller1.activate();
+
+        let _ = client2.create_new_topic("greeting".to_string(), 1, 2);
+        thread::sleep(time::Duration::from_secs(3));
+        controller1.shutdown();
 
         thread::sleep(time::Duration::from_secs(3));
     }

@@ -85,6 +85,7 @@ impl PartitionStateMachine {
     pub fn trigger_online_partition_state_change(&self) {
         let context = self.context.borrow();
         let partitions = context.get_partitions(vec![OFFLINE_PARTITION, NEW_PARTITION]);
+        std::mem::drop(context);
 
         self.handle_state_change(partitions, Arc::new(OnlinePartition {}));
     }
@@ -145,6 +146,11 @@ impl PartitionStateMachine {
                         context.put_partition_state(partition.clone(), target_state.clone());
                     })
                     .collect();
+                println!(
+                    "set {:?} to state {}",
+                    valid_partitions,
+                    target_state.state()
+                );
                 HashMap::new()
             }
             ONLINE_PARTITION => {
@@ -160,7 +166,10 @@ impl PartitionStateMachine {
                             == ONLINE_PARTITION
                 });
 
-                println!("{:?}, {:?}", uninitial_partitions, to_elect_partitions);
+                println!(
+                    "to-initial: {:?}, to-elect: {:?}",
+                    uninitial_partitions, to_elect_partitions
+                );
                 std::mem::drop(context);
                 if !uninitial_partitions.is_empty() {
                     let initialized_partitions = self.initialize_partitions(uninitial_partitions);
@@ -265,7 +274,7 @@ impl PartitionStateMachine {
         partitions: Vec<TopicPartition>,
     ) -> HashMap<TopicPartition, LeaderAndIsr> {
         let mut valid_leader_isrs = HashMap::new();
-        let mut context = self.context.borrow_mut();
+        let context = self.context.borrow();
         let partition_states = match self.zk_client.get_topic_partition_states(partitions) {
             Ok(states) => states,
             Err(_) => return HashMap::new(),
@@ -280,6 +289,7 @@ impl PartitionStateMachine {
         if valid_leader_isrs.is_empty() {
             return HashMap::new();
         }
+        std::mem::drop(context);
 
         let partitions_after_election = self.elect_leader_for_offline(valid_leader_isrs.clone());
 
@@ -290,6 +300,7 @@ impl PartitionStateMachine {
             new_leader_and_isrs.insert(partition.clone(), lsr.clone());
         }
 
+        let mut context = self.context.borrow_mut();
         match self
             .zk_client
             .set_leader_and_isr(new_leader_and_isrs.clone(), context.epoch_zk_version)
@@ -337,6 +348,7 @@ impl PartitionStateMachine {
                 new_isr.clear();
                 new_isr.push(new_leader.clone());
             }
+            println!("new leader is {}, new isr is {:?}", new_leader, new_isr);
             results.insert(
                 partition.clone(),
                 (

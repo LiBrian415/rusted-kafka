@@ -48,7 +48,7 @@ pub struct TopicIdReplicaAssignment {
     pub assignment: HashMap<TopicPartition, ReplicaAssignment>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct LeaderAndIsr {
     pub leader: u32,
     pub isr: Vec<u32>,

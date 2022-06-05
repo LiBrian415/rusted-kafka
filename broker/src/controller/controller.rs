@@ -689,6 +689,8 @@ impl Controller {
             .context
             .borrow()
             .replicas_on_brokers(brokers.iter().cloned().collect());
+
+        println!("replicas {:?} are disconnected", replicas);
         self.on_replicas_become_offline(replicas);
 
         self.unregister_broker_modification_handler(brokers.into_iter().collect());
@@ -697,6 +699,10 @@ impl Controller {
     fn on_replicas_become_offline(&self, replicas: HashSet<PartitionReplica>) {
         let partitions_with_offline_leader =
             self.context.borrow_mut().partitions_with_offline_leader();
+        println!(
+            "offline leader partitions: {:?}",
+            partitions_with_offline_leader
+        );
         self.partition_state_machine.handle_state_change(
             partitions_with_offline_leader,
             Arc::new(OfflinePartition {}),

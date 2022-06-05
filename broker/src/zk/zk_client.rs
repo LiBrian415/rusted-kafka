@@ -632,11 +632,15 @@ impl KafkaZkClient {
         }
 
         if ids.len() < num_replicas {
+            ids.sort();
             ids
         } else {
-            ids.choose_multiple(&mut rand::thread_rng(), num_replicas)
+            let mut assigned_replicas = ids
+                .choose_multiple(&mut rand::thread_rng(), num_replicas)
                 .cloned()
-                .collect::<Vec<u32>>()
+                .collect::<Vec<u32>>();
+            assigned_replicas.sort();
+            assigned_replicas
         }
     }
 
