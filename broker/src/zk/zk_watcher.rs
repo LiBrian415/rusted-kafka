@@ -5,6 +5,8 @@ use std::{
 
 use zookeeper::{WatchedEventType, Watcher};
 
+use super::zk_data::ControllerZNode;
+
 pub struct KafkaZkWatcher {
     pub handlers: KafkaZkHandlers,
 }
@@ -46,9 +48,11 @@ impl Watcher for KafkaZkWatcher {
         if let Some(path) = event.path {
             match event.event_type {
                 WatchedEventType::NodeCreated => {
-                    let g = self.handlers.change_handlers.read().unwrap();
-                    if let Some(handler) = (*g).get(&path) {
-                        handler.handle_create();
+                    if path != ControllerZNode::path() {
+                        let g = self.handlers.change_handlers.read().unwrap();
+                        if let Some(handler) = (*g).get(&path) {
+                            handler.handle_create();
+                        }
                     }
                 }
                 WatchedEventType::NodeDeleted => {

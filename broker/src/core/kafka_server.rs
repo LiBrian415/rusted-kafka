@@ -104,9 +104,8 @@ impl KafkaServer {
         };
         let broker_info = BrokerInfo::init(host.as_str(), port.as_str(), broker_id);
         let broker_epoch = 0;
-        let controller =
-            ControllerWorker::startup(zk_client.clone(), broker_info.clone(), broker_epoch);
-        controller.activate().await;
+        let controller = ControllerWorker::startup(zk_client.clone(), broker_info, broker_epoch);
+        controller.activate();
 
         let log_manager = Arc::new(LogManager::init());
         let replica_manager = Arc::new(ReplicaManager::init(
@@ -195,7 +194,10 @@ impl Broker for BrokerStream {
             .map(|tp| (tp.topic.clone(), tp.partitions))
             .collect();
 
-        match self.zk_client.create_new_topic(topic_partitions) {
+        match self
+            .zk_client
+            .create_new_topic("greeting".to_string(), 1, 2)
+        {
             Ok(()) => {
                 thread::sleep(time::Duration::from_secs(2));
                 Ok(Response::new(Void {}))

@@ -5,7 +5,8 @@ use std::{any::Any, collections::HashSet, sync::mpsc::SyncSender};
 use super::constants::{
     EVENT_BROKER_CHANGE, EVENT_BROKER_MODIFICATION, EVENT_CONTROLLER_CHANGE,
     EVENT_ISR_CHANGE_NOTIFICATION, EVENT_REGISTER_BROKER_AND_REELECT,
-    EVENT_REPLICA_LEADER_ELECTION, EVENT_RE_ELECT, EVENT_STARTUP, EVENT_TOPIC_CHANGE,
+    EVENT_REPLICA_LEADER_ELECTION, EVENT_RE_ELECT, EVENT_SHUTDOWN, EVENT_STARTUP,
+    EVENT_TOPIC_CHANGE,
 };
 
 pub trait ControllerEvent: Send + Sync {
@@ -152,5 +153,22 @@ impl ControllerEvent for IsrChangeNotification {
 
     fn complete(&self) -> () {
         todo!();
+    }
+}
+
+pub struct Shutdown {
+    pub tx: SyncSender<()>,
+}
+impl ControllerEvent for Shutdown {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn state(&self) -> u32 {
+        EVENT_SHUTDOWN
+    }
+
+    fn complete(&self) -> () {
+        let _ = self.tx.send(());
     }
 }

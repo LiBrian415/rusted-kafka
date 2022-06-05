@@ -3,7 +3,6 @@ use std::{
     collections::HashMap,
     rc::Rc,
     sync::{Arc, RwLock},
-    thread,
 };
 
 use crate::{
@@ -47,7 +46,15 @@ impl ControllerChannelManager {
     }
 
     pub fn shutdown(&self) {
-        todo!();
+        let mut brokers_guard = self.brokers.write().unwrap();
+        let ids: Vec<u32> = brokers_guard
+            .iter()
+            .map(|(broker_id, _)| broker_id.clone())
+            .collect();
+
+        for id in ids {
+            brokers_guard.remove(&id);
+        }
     }
 
     pub fn remove_broker(&self, broker_id: u32) {
@@ -90,7 +97,7 @@ pub struct ControllerBrokerRequestBatch {
     broker_id: u32,
     event_manager: ControllerEventManager,
     channel_manager: Rc<RefCell<ControllerChannelManager>>,
-    leader_and_isr_requests: HashMap<u32, (TopicPartition, LeaderAndIsr)>,
+    leader_and_isr_requests: HashMap<u32, HashMap<TopicPartition, LeaderAndIsr>>,
 }
 
 impl ControllerBrokerRequestBatch {
@@ -115,8 +122,20 @@ impl ControllerBrokerRequestBatch {
         leader_and_isr: LeaderAndIsr,
     ) {
         for id in broker_ids {
-            self.leader_and_isr_requests
-                .insert(id, (partition.clone(), leader_and_isr.clone()));
+            match self.leader_and_isr_requests.get_mut(&id) {
+                Some(reqs) => match reqs.get_mut(&partition) {
+                    Some(lsr) => *lsr = leader_and_isr.clone(),
+                    None => {
+                        reqs.insert(partition.clone(), leader_and_isr.clone());
+                    }
+                },
+                None => {
+                    self.leader_and_isr_requests.insert(
+                        id,
+                        HashMap::from([(partition.clone(), leader_and_isr.clone())]),
+                    );
+                }
+            }
         }
     }
 
@@ -124,12 +143,12 @@ impl ControllerBrokerRequestBatch {
         todo!();
     }
 
-    pub fn send_request_to_brokers(&self, epoch: u128) {
+    fn send_leader_and_isr_requests(&self, epoch: u128) {
         // send request, and if success, send an event over eventManager
         let rt = Runtime::new().unwrap();
         let handle = rt.handle();
         println!(
-            "we have {} messages to send",
+            "we have {} updateAndIsr messages to send",
             self.leader_and_isr_requests.len()
         );
 
@@ -143,14 +162,20 @@ impl ControllerBrokerRequestBatch {
                 }
             };
 
-            println!("start sending");
-            handle.block_on(async {
-                println!("send out request");
-                let _ = client
-                    .set_topic_partition_leader(message.0.clone(), message.1.clone())
-                    .await;
-            });
+            for (partition, leader_and_isr) in message.iter() {
+                println!("start sending");
+                handle.block_on(async {
+                    println!("send out request");
+                    let _ = client
+                        .set_topic_partition_leader(partition.clone(), leader_and_isr.clone())
+                        .await;
+                });
+            }
         }
+    }
+
+    pub fn send_request_to_brokers(&self, epoch: u128) {
+        self.send_leader_and_isr_requests(epoch);
     }
 
     pub fn new_batch(&mut self) {

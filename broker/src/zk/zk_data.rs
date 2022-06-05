@@ -183,13 +183,8 @@ impl TopicPartitionOffsetZNode {
 
 pub struct IsrChangeNotificationZNode {}
 impl IsrChangeNotificationZNode {
-    pub fn path(seq_num: String) -> String {
-        format!("/isr_change_notification/isr_change_{}", seq_num).to_string()
-    }
-
-    pub fn seq_num(path: String) -> String {
-        let prefix = "/isr_change_notification/isr_change_".to_string();
-        path[prefix.len()..].to_string()
+    pub fn path() -> String {
+        format!("/isr_change_notification").to_string()
     }
 }
 
@@ -198,7 +193,7 @@ impl IsrChangeNotificationSequenceZNode {
     pub fn path(seq_num: String) -> String {
         format!(
             "{}/isr_change_{}",
-            IsrChangeNotificationZNode::path("".to_string()), // TODO: need to check
+            IsrChangeNotificationZNode::path(), // TODO: need to check
             seq_num
         )
         .to_string()

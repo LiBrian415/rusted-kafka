@@ -85,6 +85,7 @@ impl PartitionStateMachine {
     pub fn trigger_online_partition_state_change(&self) {
         let context = self.context.borrow();
         let partitions = context.get_partitions(vec![OFFLINE_PARTITION, NEW_PARTITION]);
+        std::mem::drop(context);
 
         self.handle_state_change(partitions, Arc::new(OnlinePartition {}));
     }
@@ -99,14 +100,6 @@ impl PartitionStateMachine {
         }
         let mut batch = self.request_batch.borrow_mut();
         batch.new_batch();
-        batch.add_leader_and_isr_request_for_brokers(
-            vec![0],
-            partitions
-                .get(&TopicPartition::init("greeting", 0))
-                .unwrap()
-                .clone(),
-            LeaderAndIsr::init(0, vec![0], 0, 0),
-        );
         std::mem::drop(batch);
         let result = self.do_handle_state_change(partitions, target_state);
 
@@ -153,10 +146,15 @@ impl PartitionStateMachine {
                         context.put_partition_state(partition.clone(), target_state.clone());
                     })
                     .collect();
+                println!(
+                    "set {:?} to state {}",
+                    valid_partitions,
+                    target_state.state()
+                );
                 HashMap::new()
             }
             ONLINE_PARTITION => {
-                let mut context = self.context.borrow_mut();
+                let context = self.context.borrow_mut();
                 let mut uninitial_partitions = valid_partitions.clone();
                 uninitial_partitions.retain(|partition| {
                     context.partition_states.get(&partition).unwrap().state() == NEW_PARTITION
@@ -168,7 +166,10 @@ impl PartitionStateMachine {
                             == ONLINE_PARTITION
                 });
 
-                println!("{:?}, {:?}", uninitial_partitions, to_elect_partitions);
+                println!(
+                    "to-initial: {:?}, to-elect: {:?}",
+                    uninitial_partitions, to_elect_partitions
+                );
                 std::mem::drop(context);
                 if !uninitial_partitions.is_empty() {
                     let initialized_partitions = self.initialize_partitions(uninitial_partitions);
@@ -207,6 +208,10 @@ impl PartitionStateMachine {
             );
         }
 
+        for (partition, replicas) in replicas_per_partition.iter() {
+            println!("partition: {:?}, replcias: {:?}", partition, replicas);
+        }
+
         let mut partitions_with_live_replicas: HashMap<TopicPartition, Vec<u32>> = HashMap::new();
         for (partition, replicas) in replicas_per_partition.iter() {
             let mut live_replicas = Vec::new();
@@ -224,11 +229,11 @@ impl PartitionStateMachine {
         for (partition, replicas) in partitions_with_live_replicas {
             let leader_and_isr = LeaderAndIsr::init(
                 replicas[0].clone(),
-                replicas,
+                replicas.clone(),
                 context.epoch,
                 INITIAL_PARTITION_EPOCH,
             );
-
+            println!("live_replicas: {:?}, {:?}", partition, replicas);
             match self.zk_client.create_topic_partition_state(HashMap::from([(
                 partition.clone(),
                 leader_and_isr.clone(),
@@ -237,7 +242,6 @@ impl PartitionStateMachine {
                 Ok(_) => {
                     context
                         .put_partition_leadership_info(partition.clone(), leader_and_isr.clone());
-                    // TODO: send leaderAndIsr request
                     let mut batch = self.request_batch.borrow_mut();
                     batch.add_leader_and_isr_request_for_brokers(
                         leader_and_isr.isr.clone(),
@@ -270,7 +274,7 @@ impl PartitionStateMachine {
         partitions: Vec<TopicPartition>,
     ) -> HashMap<TopicPartition, LeaderAndIsr> {
         let mut valid_leader_isrs = HashMap::new();
-        let mut context = self.context.borrow_mut();
+        let context = self.context.borrow();
         let partition_states = match self.zk_client.get_topic_partition_states(partitions) {
             Ok(states) => states,
             Err(_) => return HashMap::new(),
@@ -285,14 +289,32 @@ impl PartitionStateMachine {
         if valid_leader_isrs.is_empty() {
             return HashMap::new();
         }
+        std::mem::drop(context);
+
+        let partitions_after_election = self.elect_leader_for_offline(valid_leader_isrs.clone());
+
+        let mut recipients_per_partition = HashMap::new();
+        let mut new_leader_and_isrs = HashMap::new();
+        for (partition, (lsr, replicas)) in partitions_after_election.iter() {
+            recipients_per_partition.insert(partition.clone(), replicas.clone());
+            new_leader_and_isrs.insert(partition.clone(), lsr.clone());
+        }
+
+        let mut context = self.context.borrow_mut();
         match self
             .zk_client
-            .set_leader_and_isr(valid_leader_isrs.clone(), context.epoch_zk_version)
+            .set_leader_and_isr(new_leader_and_isrs.clone(), context.epoch_zk_version)
         {
             Ok(_) => {
-                for (partition, leader_and_isr) in valid_leader_isrs.iter() {
-                    context.put_partition_leadership_info(partition.clone(), leader_and_isr.clone())
-                    // TODO: add sendLeaderAndIsr requests
+                for (partition, leader_and_isr) in new_leader_and_isrs.iter() {
+                    context
+                        .put_partition_leadership_info(partition.clone(), leader_and_isr.clone());
+                    let mut batch = self.request_batch.borrow_mut();
+                    batch.add_leader_and_isr_request_for_brokers(
+                        recipients_per_partition.get(&partition).unwrap().to_vec(),
+                        partition.clone(),
+                        leader_and_isr.clone(),
+                    );
                 }
             }
             Err(_) => {
@@ -300,7 +322,64 @@ impl PartitionStateMachine {
             }
         }
 
-        valid_leader_isrs
+        new_leader_and_isrs
+    }
+
+    fn elect_leader_for_offline(
+        &self,
+        partitions_with_lsr: HashMap<TopicPartition, LeaderAndIsr>,
+    ) -> HashMap<TopicPartition, (LeaderAndIsr, Vec<u32>)> {
+        let mut results: HashMap<TopicPartition, (LeaderAndIsr, Vec<u32>)> = HashMap::new();
+        let context = self.context.borrow();
+        for (partition, leader_and_isr) in partitions_with_lsr.iter() {
+            let assignment = context.partition_replica_assignment(partition.clone());
+            let mut live_replicas = assignment.clone();
+            live_replicas.retain(|id| context.is_replica_online(*id, partition.clone()));
+
+            let new_leader = self.do_offline_leader_election(
+                assignment,
+                leader_and_isr.isr.clone(),
+                live_replicas.clone(),
+            );
+            let mut new_isr = leader_and_isr.isr.clone();
+            if leader_and_isr.isr.contains(&new_leader) {
+                new_isr.retain(|id| context.is_replica_online(*id, partition.clone()));
+            } else {
+                new_isr.clear();
+                new_isr.push(new_leader.clone());
+            }
+            println!("new leader is {}, new isr is {:?}", new_leader, new_isr);
+            results.insert(
+                partition.clone(),
+                (
+                    LeaderAndIsr::init(
+                        new_leader,
+                        new_isr,
+                        leader_and_isr.controller_epoch, // TODO: should we update the epoch and how
+                        leader_and_isr.leader_epoch,
+                    ),
+                    live_replicas,
+                ),
+            );
+        }
+
+        results
+    }
+
+    fn do_offline_leader_election(
+        &self,
+        assignment: Vec<u32>,
+        isr: Vec<u32>,
+        live_replicas: Vec<u32>,
+    ) -> u32 {
+        let mut new_leader = 0; // default none value
+        for id in assignment {
+            if live_replicas.contains(&id) && isr.contains(&id) {
+                new_leader = id
+            }
+        }
+
+        new_leader
     }
 }
 

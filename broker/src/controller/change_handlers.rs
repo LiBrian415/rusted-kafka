@@ -134,7 +134,7 @@ pub struct IsrChangeNotificationHandler {
 
 impl ZkChildChangeHandler for IsrChangeNotificationHandler {
     fn path(&self) -> String {
-        IsrChangeNotificationZNode::path("".to_string())
+        IsrChangeNotificationZNode::path()
     }
 
     fn handle_child_change(&self) {
