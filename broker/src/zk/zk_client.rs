@@ -1,3 +1,4 @@
+use rand::seq::SliceRandom;
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, RwLock},
@@ -572,43 +573,71 @@ impl KafkaZkClient {
     }
     // Topic + Partition
 
-    pub fn create_new_topic(&self, topics_and_num_partitions: Vec<(String, u32)>) -> ZkResult<()> {
-        for (topic, num_partition) in topics_and_num_partitions.iter() {
-            let path = TopicZNode::path(topic);
-            let mut partitions: HashMap<TopicPartition, Vec<u32>> = HashMap::new();
-            partitions.insert(TopicPartition::init(topic, 0), vec![0]);
-            let data = ReplicaAssignment::init(partitions, HashMap::new(), HashMap::new());
-            match self.client.create(
-                path.as_str(),
-                TopicZNode::encode(data),
-                Acl::open_unsafe().clone(),
-                CreateMode::Persistent,
-            ) {
-                Ok(_) => {}
-                Err(e) => return Err(e),
-            }
+    pub fn create_new_topic(
+        &self,
+        topic: String,
+        num_partition: usize,
+        num_replica: usize,
+    ) -> ZkResult<()> {
+        let path = TopicZNode::path(topic.as_str());
+        let mut partitions: HashMap<TopicPartition, Vec<u32>> = HashMap::new(); // topicPartition -> replica
 
-            let _ = match self.create_topic_partitions(vec![topic.to_string()])[0] {
+        for i in 0..num_partition {
+            let replicas = self.get_assigned_replicas(num_replica);
+            partitions.insert(TopicPartition::init(topic.as_str(), i as u32), replicas);
+        }
+
+        let data = ReplicaAssignment::init(partitions.clone(), HashMap::new(), HashMap::new());
+        match self.client.create(
+            path.as_str(),
+            TopicZNode::encode(data),
+            Acl::open_unsafe().clone(),
+            CreateMode::Persistent,
+        ) {
+            Ok(_) => {}
+            Err(e) => return Err(e),
+        }
+
+        let _ = match self.create_topic_partitions(vec![topic.to_string()])[0] {
+            Ok(_) => {}
+            Err(e) => return Err(e),
+        };
+        let resp = self.create_topic_partition(partitions.keys().cloned().collect());
+        for r in resp {
+            match r {
                 Ok(_) => {}
-                Err(e) => return Err(e),
-            };
-            let mut new_partitions = Vec::new();
-            for i in 0..*num_partition {
-                let partition = TopicPartition::init(topic.as_str(), i);
-                new_partitions.push(partition);
-            }
-            let resp = self.create_topic_partition(new_partitions);
-            for r in resp {
-                match r {
-                    Ok(_) => {}
-                    Err(e) => {
-                        return Err(e);
-                    }
+                Err(e) => {
+                    return Err(e);
                 }
             }
         }
 
         Ok(())
+    }
+
+    fn get_assigned_replicas(&self, num_replicas: usize) -> Vec<u32> {
+        let brokers = match self.get_all_brokers() {
+            Ok(infos) => infos,
+            Err(_) => Vec::new(),
+        };
+
+        let mut ids = Vec::new();
+        for broker in brokers {
+            match broker {
+                Some(info) => {
+                    ids.push(info.id);
+                }
+                None => {}
+            }
+        }
+
+        if ids.len() < num_replicas {
+            ids
+        } else {
+            ids.choose_multiple(&mut rand::thread_rng(), num_replicas)
+                .cloned()
+                .collect::<Vec<u32>>()
+        }
     }
 
     pub fn get_all_topics(&self, register_watch: bool) -> ZkResult<HashSet<String>> {

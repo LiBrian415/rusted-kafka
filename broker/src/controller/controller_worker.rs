@@ -91,6 +91,7 @@ mod controller_test {
         controller1.shutdown();
 
         thread::sleep(time::Duration::from_secs(3));
+        assert_eq!(client2.get_controller_id().unwrap().unwrap(), 2);
     }
 
     #[test]
