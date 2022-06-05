@@ -17,8 +17,8 @@ use super::{
         EVENT_BROKER_CHANGE, EVENT_BROKER_MODIFICATION, EVENT_CONTROLLER_CHANGE,
         EVENT_CONTROLLER_SHUTDOWN, EVENT_ISR_CHANGE_NOTIFICATION,
         EVENT_LEADER_AND_ISR_RESPONSE_RECEIVED, EVENT_REGISTER_BROKER_AND_REELECT,
-        EVENT_REPLICA_LEADER_ELECTION, EVENT_RE_ELECT, EVENT_STARTUP, EVENT_TOPIC_CHANGE,
-        EVENT_UPDATE_METADATA_RESPONSE_RECEIVED,
+        EVENT_REPLICA_LEADER_ELECTION, EVENT_RE_ELECT, EVENT_SHUTDOWN, EVENT_STARTUP,
+        EVENT_TOPIC_CHANGE, EVENT_UPDATE_METADATA_RESPONSE_RECEIVED,
     },
     controller_events::ReplicaLeaderElection,
     event_manager::ControllerEventManager,
@@ -63,6 +63,13 @@ impl Controller {
         loop {
             match self.event_rx.recv() {
                 Ok(event) => {
+                    if event.state() == EVENT_SHUTDOWN {
+                        // A mock event for testing
+                        println!("broker {} is shutdown", self.broker_id);
+                        let _ = self.zk_client.client.close();
+                        event.complete();
+                        break;
+                    }
                     self.process(event);
                 }
                 Err(_) => {}
@@ -158,6 +165,11 @@ impl Controller {
         if !self.is_active() {
             return;
         }
+
+        println!(
+            "broker {} (controller) detects broker change",
+            self.broker_id
+        );
 
         let mut curr_broker_and_epochs = match self.zk_client.get_all_broker_and_epoch() {
             Ok(resp) => resp,
