@@ -104,7 +104,8 @@ impl KafkaServer {
         };
         let broker_info = BrokerInfo::init(host.as_str(), port.as_str(), broker_id);
         let broker_epoch = 0;
-        let controller = ControllerWorker::startup(zk_client.clone(), broker_info, broker_epoch);
+        let controller =
+            ControllerWorker::startup(zk_client.clone(), broker_info.clone(), broker_epoch);
         controller.activate();
 
         let log_manager = Arc::new(LogManager::init());
