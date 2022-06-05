@@ -72,6 +72,9 @@ impl KafkaZkClient {
             .iter()
             .map(|path| self.client.delete_recursive(path))
             .collect();
+        let _ = self
+            .client
+            .delete(ControllerEpochZNode::path().as_str(), None);
     }
 
     fn check_persistent_path(&self, path: &str) -> ZkResult<()> {
@@ -158,17 +161,19 @@ impl KafkaZkClient {
 
         let (curr_epoch, curr_epoch_zk_version) = match result {
             Some(info) => (info.0, info.1.version),
-            None => match self.create_controller_epoch_znode() {
-                Ok(r) => r,
-                Err(e) => return Err(e),
-            },
+            None => {
+                println!("/controller_epoch not exists, create one");
+                match self.create_controller_epoch_znode() {
+                    Ok(r) => r,
+                    Err(e) => return Err(e),
+                }
+            }
         };
 
         // try create /controller and update /controller_epoch atomatically
         let new_controller_epoch = curr_epoch + 1;
         let expected_controller_epoch_zk_version = curr_epoch_zk_version;
-        let mut correct_controller = false;
-        let mut correct_epoch = false;
+        let mut check = false;
 
         match self.client.create(
             ControllerZNode::path().as_str(),
@@ -176,36 +181,52 @@ impl KafkaZkClient {
             Acl::open_unsafe().clone(),
             CreateMode::Ephemeral,
         ) {
-            Ok(_) => match self.client.set_data(
-                ControllerEpochZNode::path().as_str(),
-                ControllerEpochZNode::encode(new_controller_epoch),
-                Some(expected_controller_epoch_zk_version),
-            ) {
-                Ok(resp) => return Ok((new_controller_epoch, resp.version)),
-                Err(e) => match e {
-                    ZkError::BadVersion => match self.check_epoch(new_controller_epoch) {
+            Ok(_) => {
+                println!("broker {} wins the election", controller_id);
+                match self.client.set_data(
+                    ControllerEpochZNode::path().as_str(),
+                    ControllerEpochZNode::encode(new_controller_epoch),
+                    Some(expected_controller_epoch_zk_version),
+                ) {
+                    Ok(resp) => return Ok((new_controller_epoch, resp.version)),
+                    Err(e) => match e {
+                        ZkError::BadVersion => match self
+                            .check_controller_and_epoch(controller_id, new_controller_epoch)
+                        {
+                            Ok(result) => {
+                                println!(
+                                    "broker {} wins the election but fail to set epoch",
+                                    controller_id
+                                );
+                                check = result;
+                            }
+                            Err(e) => return Err(e),
+                        },
+                        _ => return Err(e),
+                    },
+                }
+            }
+            Err(e) => match e {
+                ZkError::NodeExists => {
+                    match self.check_controller_and_epoch(controller_id, new_controller_epoch) {
                         Ok(result) => {
-                            correct_epoch = result;
-                            correct_controller = true;
+                            println!("other brokers win the election");
+                            check = result;
                         }
                         Err(e) => return Err(e),
-                    },
-                    _ => return Err(e),
-                },
-            },
-            Err(e) => match e {
-                ZkError::NodeExists => match self.check_controller(controller_id) {
-                    Ok(result) => {
-                        correct_controller = result;
-                        correct_epoch = true;
                     }
-                    Err(e) => return Err(e),
-                },
-                _ => return Err(e),
+                }
+                _ => {
+                    println!(
+                        "broker {} fails the election because {:?}",
+                        controller_id, e
+                    );
+                    return Err(e);
+                }
             },
         };
 
-        if correct_controller && correct_epoch {
+        if check {
             match self.get_controller_epoch() {
                 Ok(resp) => {
                     let result = resp.unwrap();
@@ -317,6 +338,21 @@ impl KafkaZkClient {
         } else {
             return Ok(false);
         }
+    }
+
+    fn check_controller_and_epoch(&self, id: u32, epoch: u128) -> ZkResult<bool> {
+        let correct_controller = match self.check_controller(id) {
+            Ok(resp) => resp,
+            Err(e) => return Err(e),
+        };
+
+        if correct_controller {
+            match self.check_epoch(epoch) {
+                Ok(resp) => return Ok(resp),
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(false)
     }
 
     // Broker

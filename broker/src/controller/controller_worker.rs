@@ -73,10 +73,14 @@ mod controller_test {
         client.create_top_level_paths();
 
         // Start controller
-        let broker_info = BrokerInfo::init("localhost", "7777", 1);
+        let broker_info1 = BrokerInfo::init("localhost", "7777", 1);
+        let broker_info2 = BrokerInfo::init("localhost", "6666", 2);
         let broker_epoch = 0;
-        let controller = ControllerWorker::startup(client.clone(), broker_info, broker_epoch);
-        controller.activate();
-        let _ = controller.event_tx.send(Box::new(BrokerChange {}));
+        let controller1 = ControllerWorker::startup(client.clone(), broker_info1, broker_epoch);
+        let controller2 = ControllerWorker::startup(client.clone(), broker_info2, broker_epoch);
+        controller1.activate();
+        controller2.activate();
+
+        let _ = controller1.event_tx.send(Box::new(BrokerChange {}));
     }
 }
