@@ -190,20 +190,20 @@ impl Broker for BrokerStream {
     ) -> Result<tonic::Response<Void>, tonic::Status> {
         let CreateInput { topic_partitions } = request.into_inner();
 
-        let topic_partitions: Vec<(String, u32)> = topic_partitions
-            .iter()
-            .map(|tp| (tp.topic.clone(), tp.partitions))
-            .collect();
-
-        match self
-            .zk_client
-            .create_new_topic("greeting".to_string(), 1, 2)
-        {
-            Ok(()) => {
-                thread::sleep(time::Duration::from_secs(2));
-                Ok(Response::new(Void {}))
+        if let Some(topic_partitions) = topic_partitions {
+            match self.zk_client.create_new_topic(
+                topic_partitions.topic,
+                topic_partitions.partitions as usize,
+                topic_partitions.replicas as usize,
+            ) {
+                Ok(()) => {
+                    thread::sleep(time::Duration::from_secs(2));
+                    Ok(Response::new(Void {}))
+                }
+                Err(e) => Err(tonic::Status::unknown(e.to_string())),
             }
-            Err(e) => Err(tonic::Status::unknown(e.to_string())),
+        } else {
+            Err(tonic::Status::invalid_argument("Missing TopicPartitions"))
         }
     }
 

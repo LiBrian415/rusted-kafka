@@ -31,10 +31,11 @@ message TopicPartitionLeaderInput {
 message TopicPartitions {
   string topic = 1;
   uint32 partitions = 2;
+  uint32 replicas = 3;
 }
 
 message CreateInput {
-  repeated TopicPartitions topic_partitions = 1;
+  TopicPartitions topic_partitions = 1;
 }
 
 message ProducerInput {

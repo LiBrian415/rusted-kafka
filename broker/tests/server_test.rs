@@ -87,7 +87,7 @@ async fn simple_test() -> Result<(), Box<(dyn Error + Send + Sync)>> {
     let produce_client = KafkaClient::new(DEFAULT_ADDR.to_owned(), DEFAULT_PORT.to_owned());
     let consume_client = KafkaClient::new(DEFAULT_ADDR.to_owned(), DEFAULT_PORT.to_owned());
 
-    produce_client.create(vec![("greeting".to_owned(), 1)]).await?;
+    produce_client.create("greeting".to_owned(), 1, 2).await?;
 
     let message = "Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World!";
     let message = &message[..128]; // 127 is max for utf8 conversion?
@@ -126,7 +126,7 @@ async fn simple_test2() -> Result<(), Box<(dyn Error + Send + Sync)>> {
     let produce_client = KafkaClient::new(DEFAULT_ADDR.to_owned(), DEFAULT_PORT.to_owned());
     let consume_client = KafkaClient::new(DEFAULT_ADDR.to_owned(), DEFAULT_PORT.to_owned());
 
-    produce_client.create(vec![("greeting".to_owned(), 1)]).await?;
+    produce_client.create("greeting".to_owned(), 1, 2).await?;
     
     let message1 = "produce 1";
     produce_client.produce("greeting".to_owned(), 0, serialize(message1)).await?;

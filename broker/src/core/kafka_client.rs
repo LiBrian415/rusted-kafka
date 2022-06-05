@@ -67,17 +67,21 @@ impl KafkaClient {
 
     pub async fn create(
         &self,
-        topic_partitions: Vec<(String, u32)>,
+        topic: String,
+        partitions: u32,
+        replicas: u32,
     ) -> Result<(), Box<(dyn Error + Send + Sync)>> {
         let mut client = self.connect().await?;
-        let topic_partitions = topic_partitions
-            .iter()
-            .map(|(topic, partitions)| TopicPartitions {
-                topic: topic.to_owned(),
-                partitions: partitions.to_owned(),
+        let topic_partitions = TopicPartitions {
+            topic: topic.to_owned(),
+            partitions: partitions,
+            replicas,
+        };
+        client
+            .create(CreateInput {
+                topic_partitions: Some(topic_partitions),
             })
-            .collect();
-        client.create(CreateInput { topic_partitions }).await?;
+            .await?;
         Ok(())
     }
 
