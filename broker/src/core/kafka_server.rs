@@ -74,6 +74,7 @@ async fn wait_shutdown(receiver: Option<Receiver<()>>) {
 pub struct KafkaServer;
 struct BrokerStream {
     zk_client: Arc<KafkaZkClient>,
+    broker_info: BrokerInfo,
     controller: ControllerWorker,
     replica_manager: Arc<ReplicaManager>,
 }
@@ -103,7 +104,8 @@ impl KafkaServer {
         };
         let broker_info = BrokerInfo::init(host.as_str(), port.as_str(), broker_id);
         let broker_epoch = 0;
-        let controller = ControllerWorker::startup(zk_client.clone(), broker_info, broker_epoch);
+        let controller =
+            ControllerWorker::startup(zk_client.clone(), broker_info.clone(), broker_epoch);
         controller.activate().await;
 
         let log_manager = Arc::new(LogManager::init());
@@ -116,6 +118,7 @@ impl KafkaServer {
 
         let svc = BrokerServer::new(BrokerStream {
             zk_client,
+            broker_info,
             controller,
             replica_manager,
         });
@@ -227,38 +230,59 @@ impl Broker for BrokerStream {
             topic,
             partition,
             offset,
+            max,
         } = request.into_inner();
 
         let tp = TopicPartition::init(topic.as_str(), partition);
 
-        let fetch_max_bytes = 128;
+        let fetch_max_bytes = max as usize;
 
-        todo!();
-        // let (tx, rx) = mpsc::channel(fetch_max_bytes as usize);
+        let (tx, rx) = mpsc::channel(fetch_max_bytes);
 
-        // let consume_log_manager = self.log_manager.clone();
+        let consume_broker_info = self.broker_info.clone();
+        let consume_replica_manager = self.replica_manager.clone();
 
-        // tokio::spawn(async move {
-        //     if let Some(log) = consume_log_manager.get_log(&tp) {
-        //         let messages = log.fetch_messages(offset, fetch_max_bytes, true);
-        //         match tx
-        //             .send(Result::<_, Status>::Ok(ConsumerOutput {
-        //                 messages,
-        //                 end: true,
-        //             }))
-        //             .await
-        //         {
-        //             Ok(_) => {
-        //                 // item (server response) was queued to be send to client
-        //             }
-        //             Err(_item) => {
-        //                 // output_stream was build from rx and both are dropped
-        //             }
-        //         }
-        //     }
-        // });
+        tokio::spawn(async move {
+            let messages = consume_replica_manager
+                .fetch_messages(
+                    Some(consume_broker_info.id),
+                    u64::max_value(),
+                    vec![(tp, offset)],
+                )
+                .await;
 
-        // let output_stream = ReceiverStream::new(rx);
-        // Ok(Response::new(output_stream as Self::consumeStream))
+            let messages = match messages
+                .into_iter()
+                .find(|(tp, _)| tp.topic == topic.as_str() && tp.partition == partition)
+            {
+                Some(m) => m,
+                None => return Err(tonic::Status::not_found("TopicPartition not found")),
+            };
+
+            let (_tp, (messages, _high_watermark)) = messages;
+
+            let len = messages.len();
+            let mut start = 0;
+            while start < len {
+                let end = std::cmp::min(fetch_max_bytes, len - start);
+                let send = messages[start..(start + end)].to_vec();
+                match tx
+                    .send(Result::<_, Status>::Ok(ConsumerOutput { messages: send }))
+                    .await
+                {
+                    Ok(_) => {
+                        // item (server response) was queued to be send to client
+                        start += end;
+                    }
+                    Err(_item) => {
+                        // output_stream was build from rx and both are dropped
+                    }
+                };
+            }
+            Ok(())
+        });
+
+        let output_stream = ReceiverStream::new(rx);
+        Ok(Response::new(output_stream as Self::consumeStream))
     }
 }

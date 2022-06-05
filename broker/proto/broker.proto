@@ -47,11 +47,11 @@ message ConsumerInput {
   string topic = 1;
   uint32 partition = 2;
   uint64 offset = 3;
+  uint64 max = 4;
 }
 
 message ConsumerOutput {
   bytes messages = 1;
-  bool end = 2;
 }
 
 service Broker {

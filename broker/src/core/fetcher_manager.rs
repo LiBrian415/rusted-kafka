@@ -24,13 +24,17 @@ async fn fetcher_task(
 
     // 2) fetch from leader
     let mut iter = leader_client
-        .consume(topic_partition.topic, topic_partition.partition, offset)
+        .consume(
+            topic_partition.topic,
+            topic_partition.partition,
+            offset,
+            128,
+        )
         .await?;
     while let Some(res) = iter.message().await? {
-        let ConsumerOutput { messages, end } = res;
+        let ConsumerOutput { messages } = res;
         // 3) call log manager to append log
         // log.append_messages(messages);
-        println!("{:?}, {:?}", messages, end);
         // 4) repeat 2 if still data
     }
     // 5) re-set zk watch

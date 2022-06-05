@@ -60,13 +60,13 @@ pub struct ConsumerInput {
     pub partition: u32,
     #[prost(uint64, tag = "3")]
     pub offset: u64,
+    #[prost(uint64, tag = "4")]
+    pub max: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ConsumerOutput {
     #[prost(bytes = "vec", tag = "1")]
     pub messages: ::prost::alloc::vec::Vec<u8>,
-    #[prost(bool, tag = "2")]
-    pub end: bool,
 }
 #[doc = r" Generated client implementations."]
 pub mod broker_client {

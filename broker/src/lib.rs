@@ -1,4 +1,4 @@
-mod broker;
+pub mod broker;
 pub mod common;
 pub mod controller;
 pub mod core;

@@ -262,8 +262,14 @@ impl ReplicaManager {
                         None,
                     )?;
 
-                    // Wait for notification of ack
-                    notify.notified().await;
+                    let partition_state = self
+                        .partition_manager
+                        .get_partition_state(&topic_partition)
+                        .unwrap();
+                    if partition_state.get_isr().len() > 0 {
+                        // Wait for notification of ack
+                        notify.notified().await;
+                    }
                 } else {
                     let _ = self.append_local(&topic_partition, messages)?;
 
