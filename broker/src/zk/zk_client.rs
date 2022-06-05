@@ -445,7 +445,7 @@ impl KafkaZkClient {
     }
 
     pub fn delete_isr_change_notifications(&self, epoch_zk_version: i32) -> ZkResult<()> {
-        let path = IsrChangeNotificationZNode::path("".to_string());
+        let path = IsrChangeNotificationZNode::path();
         let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
             Ok(watch) => watch,
             Err(_) => false,
@@ -462,7 +462,7 @@ impl KafkaZkClient {
             Ok(data) => {
                 return self.delete_isr_change_notifications_with_sequence_num(
                     data.iter()
-                        .map(|child| IsrChangeNotificationZNode::seq_num(child.to_string()))
+                        .map(|child| IsrChangeNotificationSequenceZNode::seq_num(child.to_string()))
                         .collect(),
                     epoch_zk_version,
                 );
@@ -492,7 +492,7 @@ impl KafkaZkClient {
     }
 
     pub fn get_all_isr_change_notifications(&self) -> ZkResult<Vec<String>> {
-        let path = IsrChangeNotificationZNode::path("".to_string());
+        let path = IsrChangeNotificationZNode::path();
         let watch = match self.should_watch(path.clone(), GET_CHILDREN_REQUEST, true) {
             Ok(watch) => watch,
             Err(_) => false,
@@ -506,7 +506,13 @@ impl KafkaZkClient {
         };
 
         match result {
-            Ok(resp) => Ok(resp),
+            Ok(resp) => {
+                let mut notifications = Vec::new();
+                for seq_path in resp {
+                    notifications.push(IsrChangeNotificationSequenceZNode::seq_num(seq_path));
+                }
+                Ok(notifications)
+            }
             Err(e) => match e {
                 ZkError::NoNode => Ok(Vec::new()),
                 _ => Err(e),

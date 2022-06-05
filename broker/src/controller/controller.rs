@@ -608,9 +608,8 @@ impl Controller {
      */
     fn on_controller_resignation(&self) {
         // TODO: unregister watchers maybe need to add more
-        self.zk_client.unregister_znode_child_change_handler(
-            IsrChangeNotificationZNode::path("".to_string()).as_str(),
-        );
+        self.zk_client
+            .unregister_znode_child_change_handler(IsrChangeNotificationZNode::path().as_str());
         let guard = self.broker_modification_handlers.read().unwrap();
         let broker_ids: Vec<u32> = guard.keys().cloned().collect();
         std::mem::drop(guard);
