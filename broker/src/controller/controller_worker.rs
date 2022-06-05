@@ -36,12 +36,47 @@ impl ControllerWorker {
         }
     }
 
-    pub async fn activate(&self) {
+    pub fn activate(&self) {
         let (tx, rx) = sync_channel(1);
 
         // TODO: maybe an expire event here
         let _ = self.event_tx.send(Box::new(RegisterBrokerAndReElect {}));
         let _ = self.event_tx.send(Box::new(Startup { tx }));
         let _ = rx.recv();
+    }
+}
+
+#[cfg(test)]
+mod controller_test {
+    use std::{sync::Arc, time::Duration};
+
+    use crate::{
+        common::broker::BrokerInfo, controller::controller_events::BrokerChange,
+        zk::zk_client::KafkaZkClient,
+    };
+
+    use super::ControllerWorker;
+
+    const CONN_STR: &str = "localhost:2181";
+    const SESS_TIMEOUT: Duration = Duration::from_secs(3);
+
+    fn get_client() -> Arc<KafkaZkClient> {
+        let client = KafkaZkClient::init(CONN_STR, SESS_TIMEOUT);
+        assert!(!client.is_err());
+        Arc::new(client.unwrap())
+    }
+
+    #[test]
+    fn test_broker_change() {
+        let client = get_client();
+        client.cleanup();
+        client.create_top_level_paths();
+
+        // Start controller
+        let broker_info = BrokerInfo::init("localhost", "7777", 1);
+        let broker_epoch = 0;
+        let controller = ControllerWorker::startup(client.clone(), broker_info, broker_epoch);
+        controller.activate();
+        let _ = controller.event_tx.send(Box::new(BrokerChange {}));
     }
 }
