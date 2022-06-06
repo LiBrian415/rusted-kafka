@@ -674,6 +674,7 @@ impl Controller {
         );
 
         let all_replias_on_new_brokers = context.replicas_on_brokers(broker_set.clone());
+        std::mem::drop(context);
 
         self.replica_state_machine
             .handle_state_change(all_replias_on_new_brokers, Arc::new(OnlineReplica {}));
