@@ -496,7 +496,7 @@ impl Controller {
         context.clear_partition_leadership_info();
         context.shuttingdown_broker_ids.clear();
 
-        self.register_broker_modification_handler(context.live_or_shutting_down_broker_ids());
+        // self.register_broker_modification_handler(context.live_or_shutting_down_broker_ids());
         std::mem::drop(context);
         self.update_leader_and_isr_cache(Vec::new());
         self.channel_manager.borrow_mut().startup();
@@ -613,7 +613,7 @@ impl Controller {
         let guard = self.broker_modification_handlers.read().unwrap();
         let broker_ids: Vec<u32> = guard.keys().cloned().collect();
         std::mem::drop(guard);
-        self.unregister_broker_modification_handler(broker_ids);
+        // self.unregister_broker_modification_handler(broker_ids);
 
         self.partition_state_machine.shutdown();
 
@@ -681,7 +681,7 @@ impl Controller {
 
         self.partition_state_machine
             .trigger_online_partition_state_change();
-        self.register_broker_modification_handler(broker_set);
+        // self.register_broker_modification_handler(broker_set);
     }
 
     fn on_broker_failure(&self, brokers: Vec<u32>) {
@@ -693,7 +693,7 @@ impl Controller {
         println!("replicas {:?} are disconnected", replicas);
         self.on_replicas_become_offline(replicas);
 
-        self.unregister_broker_modification_handler(brokers.into_iter().collect());
+        // self.unregister_broker_modification_handler(brokers.into_iter().collect());
     }
 
     fn on_replicas_become_offline(&self, replicas: HashSet<PartitionReplica>) {

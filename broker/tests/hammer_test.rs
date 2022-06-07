@@ -83,7 +83,7 @@ async fn spawn_multi_server_testers(start_port: usize, count: usize) -> Vec<Serv
         server_testers.push(server_tester);
     }
 
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 
     server_testers
 }
@@ -281,6 +281,7 @@ async fn test_multi_fail() -> Result<(), Box<(dyn Error + Send + Sync)>> {
     }
 
     assert!(!server_testers[0].shutdown().await.is_err());
+    assert!(!server_testers[1].shutdown().await.is_err());
 
     Ok(())
 }
