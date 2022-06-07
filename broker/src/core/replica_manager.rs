@@ -18,6 +18,7 @@ use super::{
     ack_manager::AckManager,
     background::{isr_update::isr_update_task, watermark_checkpoint::watermark_cp_task},
     err::{ReplicaError, ReplicaResult},
+    fetcher_manager::FetcherManager,
     log_manager::LogManager,
     partition_manager::PartitionManager,
 };
@@ -39,6 +40,7 @@ pub struct ReplicaManager {
     zk_client: Arc<KafkaZkClient>,
     partition_manager: Arc<PartitionManager>,
     ack_manager: Arc<AckManager>,
+    fetcher_manager: Arc<FetcherManager>,
 
     _isr_update_task: JoinHandle<()>,
     _watermark_cp_task: JoinHandle<()>,
@@ -50,18 +52,20 @@ impl ReplicaManager {
         controller_epoch: Option<i32>,
         log_manager: Arc<LogManager>,
         zk_client: Arc<KafkaZkClient>,
-    ) -> ReplicaManager {
+    ) -> Arc<ReplicaManager> {
         let partition_manager = Arc::new(PartitionManager::init(log_manager.clone()));
         let ack_manager = Arc::new(AckManager::init(log_manager.clone()));
         let controller_epoch = Arc::new(RwLock::new(controller_epoch));
+        let fetcher_manager = Arc::new(FetcherManager::init(zk_client.clone()));
 
-        ReplicaManager {
+        let replica_manager = Arc::new(ReplicaManager {
             broker_id,
             controller_epoch: controller_epoch.clone(),
             log_manager: log_manager.clone(),
             zk_client: zk_client.clone(),
             partition_manager: partition_manager.clone(),
             ack_manager: ack_manager.clone(),
+            fetcher_manager: fetcher_manager.clone(),
 
             _isr_update_task: isr_update_task(
                 broker_id,
@@ -71,7 +75,11 @@ impl ReplicaManager {
                 zk_client.clone(),
             ),
             _watermark_cp_task: watermark_cp_task(partition_manager.clone()),
-        }
+        });
+
+        fetcher_manager.set_replica_manager(replica_manager.clone());
+
+        replica_manager
     }
 
     /// Used to handle replica metadata changes and assignment
@@ -106,6 +114,7 @@ impl ReplicaManager {
         topic_partition: TopicPartition,
         leader_and_isr: LeaderAndIsr,
     ) -> ReplicaResult<()> {
+        println!("broker {} make leader", self.broker_id);
         if self
             .partition_manager
             .set_leader_partition(topic_partition.clone(), leader_and_isr)
@@ -131,6 +140,7 @@ impl ReplicaManager {
         topic_partition: TopicPartition,
         leader_and_isr: LeaderAndIsr,
     ) -> ReplicaResult<()> {
+        println!("broker {} make follower", self.broker_id);
         // 1)
         // Make sure that the leader actually exists
         let leader_info = self.zk_client.get_broker(leader_and_isr.leader)?;
@@ -152,6 +162,7 @@ impl ReplicaManager {
         }
 
         // 2)
+        self.fetcher_manager.delete_fetcher_thread(&topic_partition);
 
         // 3)
         let log = self.log_manager.get_or_create_log(&topic_partition);
@@ -161,6 +172,9 @@ impl ReplicaManager {
         let local_offset = log.get_log_end();
 
         // 5)
+        self.fetcher_manager
+            .create_fetcher_thread(&topic_partition, local_offset);
+
         Ok(())
     }
 
@@ -262,8 +276,14 @@ impl ReplicaManager {
                         None,
                     )?;
 
-                    // Wait for notification of ack
-                    notify.notified().await;
+                    let partition_state = self
+                        .partition_manager
+                        .get_partition_state(&topic_partition)
+                        .unwrap();
+                    if partition_state.get_isr().len() > 0 {
+                        // Wait for notification of ack
+                        notify.notified().await;
+                    }
                 } else {
                     let _ = self.append_local(&topic_partition, messages)?;
 

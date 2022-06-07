@@ -1,3 +1,4 @@
+use rand::seq::SliceRandom;
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, RwLock},
@@ -72,6 +73,9 @@ impl KafkaZkClient {
             .iter()
             .map(|path| self.client.delete_recursive(path))
             .collect();
+        let _ = self
+            .client
+            .delete(ControllerEpochZNode::path().as_str(), None);
     }
 
     fn check_persistent_path(&self, path: &str) -> ZkResult<()> {
@@ -158,17 +162,19 @@ impl KafkaZkClient {
 
         let (curr_epoch, curr_epoch_zk_version) = match result {
             Some(info) => (info.0, info.1.version),
-            None => match self.create_controller_epoch_znode() {
-                Ok(r) => r,
-                Err(e) => return Err(e),
-            },
+            None => {
+                println!("/controller_epoch not exists, create one");
+                match self.create_controller_epoch_znode() {
+                    Ok(r) => r,
+                    Err(e) => return Err(e),
+                }
+            }
         };
 
         // try create /controller and update /controller_epoch atomatically
         let new_controller_epoch = curr_epoch + 1;
         let expected_controller_epoch_zk_version = curr_epoch_zk_version;
-        let mut correct_controller = false;
-        let mut correct_epoch = false;
+        let mut check = false;
 
         match self.client.create(
             ControllerZNode::path().as_str(),
@@ -176,36 +182,52 @@ impl KafkaZkClient {
             Acl::open_unsafe().clone(),
             CreateMode::Ephemeral,
         ) {
-            Ok(_) => match self.client.set_data(
-                ControllerEpochZNode::path().as_str(),
-                ControllerEpochZNode::encode(new_controller_epoch),
-                Some(expected_controller_epoch_zk_version),
-            ) {
-                Ok(resp) => return Ok((new_controller_epoch, resp.version)),
-                Err(e) => match e {
-                    ZkError::BadVersion => match self.check_epoch(new_controller_epoch) {
+            Ok(_) => {
+                println!("broker {} wins the election", controller_id);
+                match self.client.set_data(
+                    ControllerEpochZNode::path().as_str(),
+                    ControllerEpochZNode::encode(new_controller_epoch),
+                    Some(expected_controller_epoch_zk_version),
+                ) {
+                    Ok(resp) => return Ok((new_controller_epoch, resp.version)),
+                    Err(e) => match e {
+                        ZkError::BadVersion => match self
+                            .check_controller_and_epoch(controller_id, new_controller_epoch)
+                        {
+                            Ok(result) => {
+                                println!(
+                                    "broker {} wins the election but fail to set epoch",
+                                    controller_id
+                                );
+                                check = result;
+                            }
+                            Err(e) => return Err(e),
+                        },
+                        _ => return Err(e),
+                    },
+                }
+            }
+            Err(e) => match e {
+                ZkError::NodeExists => {
+                    match self.check_controller_and_epoch(controller_id, new_controller_epoch) {
                         Ok(result) => {
-                            correct_epoch = result;
-                            correct_controller = true;
+                            println!("other brokers win the election");
+                            check = result;
                         }
                         Err(e) => return Err(e),
-                    },
-                    _ => return Err(e),
-                },
-            },
-            Err(e) => match e {
-                ZkError::NodeExists => match self.check_controller(controller_id) {
-                    Ok(result) => {
-                        correct_controller = result;
-                        correct_epoch = true;
                     }
-                    Err(e) => return Err(e),
-                },
-                _ => return Err(e),
+                }
+                _ => {
+                    println!(
+                        "broker {} fails the election because {:?}",
+                        controller_id, e
+                    );
+                    return Err(e);
+                }
             },
         };
 
-        if correct_controller && correct_epoch {
+        if check {
             match self.get_controller_epoch() {
                 Ok(resp) => {
                     let result = resp.unwrap();
@@ -319,6 +341,21 @@ impl KafkaZkClient {
         }
     }
 
+    fn check_controller_and_epoch(&self, id: u32, epoch: u128) -> ZkResult<bool> {
+        let correct_controller = match self.check_controller(id) {
+            Ok(resp) => resp,
+            Err(e) => return Err(e),
+        };
+
+        if correct_controller {
+            match self.check_epoch(epoch) {
+                Ok(resp) => return Ok(resp),
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(false)
+    }
+
     // Broker
 
     pub fn register_broker(&self, broker: BrokerInfo) -> ZkResult<i64> {
@@ -408,7 +445,7 @@ impl KafkaZkClient {
     }
 
     pub fn delete_isr_change_notifications(&self, epoch_zk_version: i32) -> ZkResult<()> {
-        let path = IsrChangeNotificationZNode::path("".to_string());
+        let path = IsrChangeNotificationZNode::path();
         let watch = match self.should_watch(path.clone(), GET_REQUEST, true) {
             Ok(watch) => watch,
             Err(_) => false,
@@ -425,7 +462,7 @@ impl KafkaZkClient {
             Ok(data) => {
                 return self.delete_isr_change_notifications_with_sequence_num(
                     data.iter()
-                        .map(|child| IsrChangeNotificationZNode::seq_num(child.to_string()))
+                        .map(|child| IsrChangeNotificationSequenceZNode::seq_num(child.to_string()))
                         .collect(),
                     epoch_zk_version,
                 );
@@ -455,7 +492,7 @@ impl KafkaZkClient {
     }
 
     pub fn get_all_isr_change_notifications(&self) -> ZkResult<Vec<String>> {
-        let path = IsrChangeNotificationZNode::path("".to_string());
+        let path = IsrChangeNotificationZNode::path();
         let watch = match self.should_watch(path.clone(), GET_CHILDREN_REQUEST, true) {
             Ok(watch) => watch,
             Err(_) => false,
@@ -469,7 +506,13 @@ impl KafkaZkClient {
         };
 
         match result {
-            Ok(resp) => Ok(resp),
+            Ok(resp) => {
+                let mut notifications = Vec::new();
+                for seq_path in resp {
+                    notifications.push(IsrChangeNotificationSequenceZNode::seq_num(seq_path));
+                }
+                Ok(notifications)
+            }
             Err(e) => match e {
                 ZkError::NoNode => Ok(Vec::new()),
                 _ => Err(e),
@@ -536,43 +579,75 @@ impl KafkaZkClient {
     }
     // Topic + Partition
 
-    pub fn create_new_topic(&self, topics_and_num_partitions: Vec<(String, u32)>) -> ZkResult<()> {
-        for (topic, num_partition) in topics_and_num_partitions.iter() {
-            let path = TopicZNode::path(topic);
-            let mut partitions: HashMap<TopicPartition, Vec<u32>> = HashMap::new();
-            partitions.insert(TopicPartition::init(topic, 0), vec![0]);
-            let data = ReplicaAssignment::init(partitions, HashMap::new(), HashMap::new());
-            match self.client.create(
-                path.as_str(),
-                TopicZNode::encode(data),
-                Acl::open_unsafe().clone(),
-                CreateMode::Persistent,
-            ) {
-                Ok(_) => {}
-                Err(e) => return Err(e),
-            }
+    pub fn create_new_topic(
+        &self,
+        topic: String,
+        num_partition: usize,
+        num_replica: usize,
+    ) -> ZkResult<()> {
+        let path = TopicZNode::path(topic.as_str());
+        let mut partitions: HashMap<TopicPartition, Vec<u32>> = HashMap::new(); // topicPartition -> replica
 
-            let _ = match self.create_topic_partitions(vec![topic.to_string()])[0] {
+        for i in 0..num_partition {
+            let replicas = self.get_assigned_replicas(num_replica);
+            partitions.insert(TopicPartition::init(topic.as_str(), i as u32), replicas);
+        }
+
+        let data = ReplicaAssignment::init(partitions.clone(), HashMap::new(), HashMap::new());
+        match self.client.create(
+            path.as_str(),
+            TopicZNode::encode(data),
+            Acl::open_unsafe().clone(),
+            CreateMode::Persistent,
+        ) {
+            Ok(_) => {}
+            Err(e) => return Err(e),
+        }
+
+        let _ = match self.create_topic_partitions(vec![topic.to_string()])[0] {
+            Ok(_) => {}
+            Err(e) => return Err(e),
+        };
+        let resp = self.create_topic_partition(partitions.keys().cloned().collect());
+        for r in resp {
+            match r {
                 Ok(_) => {}
-                Err(e) => return Err(e),
-            };
-            let mut new_partitions = Vec::new();
-            for i in 0..*num_partition {
-                let partition = TopicPartition::init(topic.as_str(), i);
-                new_partitions.push(partition);
-            }
-            let resp = self.create_topic_partition(new_partitions);
-            for r in resp {
-                match r {
-                    Ok(_) => {}
-                    Err(e) => {
-                        return Err(e);
-                    }
+                Err(e) => {
+                    return Err(e);
                 }
             }
         }
 
         Ok(())
+    }
+
+    fn get_assigned_replicas(&self, num_replicas: usize) -> Vec<u32> {
+        let brokers = match self.get_all_brokers() {
+            Ok(infos) => infos,
+            Err(_) => Vec::new(),
+        };
+
+        let mut ids = Vec::new();
+        for broker in brokers {
+            match broker {
+                Some(info) => {
+                    ids.push(info.id);
+                }
+                None => {}
+            }
+        }
+
+        if ids.len() < num_replicas {
+            ids.sort();
+            ids
+        } else {
+            let mut assigned_replicas = ids
+                .choose_multiple(&mut rand::thread_rng(), num_replicas)
+                .cloned()
+                .collect::<Vec<u32>>();
+            assigned_replicas.sort();
+            assigned_replicas
+        }
     }
 
     pub fn get_all_topics(&self, register_watch: bool) -> ZkResult<HashSet<String>> {
