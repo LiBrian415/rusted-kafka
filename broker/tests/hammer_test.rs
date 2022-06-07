@@ -147,7 +147,8 @@ fn deserialize(messages: Vec<u8>) -> (String, usize) {
 async fn get_messages(mut iter: Streaming<ConsumerOutput>) -> Result<Vec<String>, Box<(dyn Error + Send + Sync)>> {
     let mut res = Vec::new();
     if let Some(output) = &iter.message().await? {
-        let mut messages = output.messages.clone();
+        let ConsumerOutput { messages } = output;
+        let mut messages = messages.clone();
         while messages.len() > 0 {
             if messages.len() > 0 && messages.len() < 4 {
                 let output = iter.message().await?;

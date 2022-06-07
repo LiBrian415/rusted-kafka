@@ -118,12 +118,7 @@ impl KafkaServer {
         let controller_clone = controller.clone();
 
         let log_manager = Arc::new(LogManager::init());
-        let replica_manager = Arc::new(ReplicaManager::init(
-            broker_id,
-            None,
-            log_manager,
-            zk_client.clone(),
-        ));
+        let replica_manager = ReplicaManager::init(broker_id, None, log_manager, zk_client.clone());
 
         let svc = BrokerServer::new(BrokerStream {
             zk_client,
