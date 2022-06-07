@@ -67,7 +67,7 @@ impl ServerTester {
     }
 }
 
-async fn spawn_multi_server_testers(start_port: usize, count: usize) -> (Vec<String>, Vec<ServerTester>) {
+async fn spawn_multi_server_testers(start_port: usize, count: usize) -> Vec<ServerTester> {
     let mut addrs = Vec::new();
     for c in 0..count {
         addrs.push(format!("localhost:{}", start_port + c));
@@ -79,7 +79,7 @@ async fn spawn_multi_server_testers(start_port: usize, count: usize) -> (Vec<Str
         assert!(!server_tester.start().await.is_err());
         server_testers.push(server_tester);
     }
-    return (addrs, server_testers);
+    server_testers
 }
 
 // async fn spawn_multi_clients(addrs: Vec<String>) -> Vec<Box<dyn Storage>> {
@@ -154,61 +154,92 @@ async fn get_messages(mut iter: Streaming<ConsumerOutput>) -> Result<Vec<String>
     Ok(res)
 }
 
+// #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+// async fn test_tester_shutdown() -> Result<(), Box<(dyn Error + Send + Sync)>> {
+//     let mut server_testers = spawn_multi_server_testers(3000, 1).await;
+
+//     assert!(server_testers[0].start().await.is_err());
+
+//     assert!(!server_testers[0].shutdown().await.is_err());
+//     assert!(server_testers[0].shutdown().await.is_err());
+
+//     Ok(())
+// }
+
+// #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+// async fn test_tester_start() -> Result<(), Box<(dyn Error + Send + Sync)>> {
+//     let mut server_testers = spawn_multi_server_testers(3000, 1).await;
+
+//     assert!(!server_testers[0].shutdown().await.is_err());
+//     assert!(!server_testers[0].start().await.is_err());
+//     assert!(!server_testers[0].shutdown().await.is_err());
+
+//     Ok(())
+// }
+
+// #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+// async fn test_multi_simple() -> Result<(), Box<(dyn Error + Send + Sync)>> {
+//     let mut server_testers = spawn_multi_server_testers(3000, 1).await;
+//     tokio::time::sleep(Duration::from_secs(1)).await;
+
+//     let produce_client = KafkaClient::new("localhost".to_owned(), "3000".to_owned());
+//     let consume_client = KafkaClient::new("localhost".to_owned(), "3000".to_owned());
+
+//     produce_client.create("greeting".to_owned(), 1, 2).await?;
+
+//     let message = "Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World!";
+//     let message = &message[..128]; // 127 is max for utf8 conversion?
+//     produce_client.produce("greeting".to_owned(), 0, serialize(message)).await?;
+
+//     match consume_client.consume("greeting".to_owned(), 0, 0, 64).await {
+//         Ok(iter) => {
+//             let messages = get_messages(iter).await?;
+//             messages.iter().for_each(|message| println!("res = {:?} {:?}", message, message.len()));
+//         }
+//         Err(e) => {
+//             eprintln!("{:?}", e);
+//         }
+//     }
+
+//     assert!(!server_testers[0].shutdown().await.is_err());
+
+//     Ok(())
+// }
+
+// #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+// async fn test_multi_produce() -> Result<(), Box<(dyn Error + Send + Sync)>> {
+//     let mut server_testers = spawn_multi_server_testers(3000, 1).await;
+//     tokio::time::sleep(Duration::from_secs(1)).await;
+
+//     let produce_client = KafkaClient::new("localhost".to_owned(), "3000".to_owned());
+//     let consume_client = KafkaClient::new("localhost".to_owned(), "3000".to_owned());
+
+//     produce_client.create("greeting".to_owned(), 1, 2).await?;
+    
+//     let message1 = "produce 1";
+//     produce_client.produce("greeting".to_owned(), 0, serialize(message1)).await?;
+
+//     let message2 = "produce 2";
+//     produce_client.produce("greeting".to_owned(), 0, serialize(message2)).await?;
+
+//     match consume_client.consume("greeting".to_owned(), 0, 0, 128).await {
+//         Ok(iter) => {
+//             let messages = get_messages(iter).await?;
+//             messages.iter().for_each(|message| println!("res = {:?} {:?}", message, message.len()));
+//         }
+//         Err(e) => {
+//             eprintln!("{:?}", e);
+//         }
+//     }
+
+//     assert!(!server_testers[0].shutdown().await.is_err());
+
+//     Ok(())
+// }
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_tester_shutdown() -> Result<(), Box<(dyn Error + Send + Sync)>> {
-    let (addrs, mut server_testers) = spawn_multi_server_testers(3000, 1).await;
-
-    assert!(server_testers[0].start().await.is_err());
-
-    assert!(!server_testers[0].shutdown().await.is_err());
-    assert!(server_testers[0].shutdown().await.is_err());
-
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_tester_start() -> Result<(), Box<(dyn Error + Send + Sync)>> {
-    let (addrs, mut server_testers) = spawn_multi_server_testers(3000, 1).await;
-
-    assert!(!server_testers[0].shutdown().await.is_err());
-    assert!(!server_testers[0].start().await.is_err());
-    assert!(!server_testers[0].shutdown().await.is_err());
-
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_multi_simple() -> Result<(), Box<(dyn Error + Send + Sync)>> {
-    let (addrs, mut server_testers) = spawn_multi_server_testers(3000, 1).await;
-    tokio::time::sleep(Duration::from_secs(1)).await;
-
-    let produce_client = KafkaClient::new("localhost".to_owned(), "3000".to_owned());
-    let consume_client = KafkaClient::new("localhost".to_owned(), "3000".to_owned());
-
-    produce_client.create("greeting".to_owned(), 1, 2).await?;
-
-    let message = "Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World! Hello, World!";
-    let message = &message[..128]; // 127 is max for utf8 conversion?
-    produce_client.produce("greeting".to_owned(), 0, serialize(message)).await?;
-
-    match consume_client.consume("greeting".to_owned(), 0, 0, 64).await {
-        Ok(iter) => {
-            let messages = get_messages(iter).await?;
-            messages.iter().for_each(|message| println!("res = {:?} {:?}", message, message.len()));
-        }
-        Err(e) => {
-            eprintln!("{:?}", e);
-        }
-    }
-
-    assert!(!server_testers[0].shutdown().await.is_err());
-
-    Ok(())
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn test_multi_produce() -> Result<(), Box<(dyn Error + Send + Sync)>> {
-    let (addrs, mut server_testers) = spawn_multi_server_testers(3000, 1).await;
+async fn test_multi_fail() -> Result<(), Box<(dyn Error + Send + Sync)>> {
+    let mut server_testers = spawn_multi_server_testers(3000, 2).await;
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     let produce_client = KafkaClient::new("localhost".to_owned(), "3000".to_owned());
