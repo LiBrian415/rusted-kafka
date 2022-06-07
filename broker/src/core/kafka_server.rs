@@ -1,10 +1,8 @@
-use core::time;
 use std::{
     collections::HashMap,
     error::Error,
     net::{SocketAddr, ToSocketAddrs},
     sync::{mpsc::Sender, Arc, RwLock},
-    thread,
     time::Duration,
 };
 
@@ -83,6 +81,8 @@ struct BrokerStream {
     broker_info: BrokerInfo,
     controller: Arc<ControllerWorker>,
     replica_manager: Arc<ReplicaManager>,
+    event_rx: tokio::sync::Mutex<tokio::sync::mpsc::Receiver<()>>,
+    event_tx: tokio::sync::mpsc::Sender<()>,
 }
 
 impl KafkaServer {
@@ -120,11 +120,15 @@ impl KafkaServer {
         let log_manager = Arc::new(LogManager::init());
         let replica_manager = ReplicaManager::init(broker_id, None, log_manager, zk_client.clone());
 
+        let (event_tx, unlock_event_rx) = tokio::sync::mpsc::channel(1);
+        let event_rx = tokio::sync::Mutex::new(unlock_event_rx);
         let svc = BrokerServer::new(BrokerStream {
             zk_client,
             broker_info,
             controller,
             replica_manager,
+            event_tx,
+            event_rx,
         });
         let server = Server::builder().add_service(svc);
 
@@ -185,7 +189,10 @@ impl Broker for BrokerStream {
                 controller_epoch: controller_epoch as u128,
             },
         ) {
-            Ok(()) => Ok(Response::new(Void {})),
+            Ok(()) => {
+                let _ = self.event_tx.send(()).await;
+                Ok(Response::new(Void {}))
+            }
             Err(e) => Err(tonic::Status::unknown(e.to_string())),
         }
     }
@@ -203,7 +210,7 @@ impl Broker for BrokerStream {
                 topic_partitions.replicas as usize,
             ) {
                 Ok(()) => {
-                    thread::sleep(time::Duration::from_secs(3));
+                    let _ = self.event_rx.lock().await.recv().await;
                     Ok(Response::new(Void {}))
                 }
                 Err(e) => Err(tonic::Status::unknown(e.to_string())),
