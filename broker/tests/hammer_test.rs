@@ -71,8 +71,6 @@ impl ServerTester {
 }
 
 async fn spawn_multi_server_testers(start_port: usize, count: usize) -> Vec<ServerTester> {
-    cleanup();
-
     let mut addrs = Vec::new();
     for c in 0..count {
         addrs.push(format!("localhost:{}", start_port + c));
@@ -98,7 +96,7 @@ async fn spawn_multi_server_testers(start_port: usize, count: usize) -> Vec<Serv
 //     return clients;
 // }
 
-fn cleanup() -> Result<(), Box<(dyn Error + Send + Sync)>> {
+fn clean_zookeeper() -> Result<(), Box<(dyn Error + Send + Sync)>> {
     let zk_client = Arc::new(KafkaZkClient::init(
         "localhost:2181",
         Duration::from_secs(3),
@@ -198,6 +196,7 @@ async fn test_tester_start() -> Result<(), Box<(dyn Error + Send + Sync)>> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_multi_simple() -> Result<(), Box<(dyn Error + Send + Sync)>> {
+    clean_zookeeper()?;
     let mut server_testers = spawn_multi_server_testers(3000, 1).await;
 
     let produce_client = KafkaClient::new("localhost".to_owned(), "3000".to_owned());
@@ -226,6 +225,7 @@ async fn test_multi_simple() -> Result<(), Box<(dyn Error + Send + Sync)>> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_multi_produce() -> Result<(), Box<(dyn Error + Send + Sync)>> {
+    clean_zookeeper()?;
     let mut server_testers = spawn_multi_server_testers(3000, 1).await;
 
     let produce_client = KafkaClient::new("localhost".to_owned(), "3000".to_owned());
@@ -256,6 +256,7 @@ async fn test_multi_produce() -> Result<(), Box<(dyn Error + Send + Sync)>> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_multi_fail() -> Result<(), Box<(dyn Error + Send + Sync)>> {
+    clean_zookeeper()?;
     let mut server_testers = spawn_multi_server_testers(3000, 2).await;
 
     let produce_client = KafkaClient::new("localhost".to_owned(), "3000".to_owned());
