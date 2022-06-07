@@ -41,7 +41,7 @@ impl ServerTester {
                     Some(tx),
                     Some(shut_rx)
                 ));
-                assert_eq!(true, rx.recv_timeout(Duration::from_secs(2)).unwrap());
+                assert_eq!(true, rx.recv_timeout(Duration::from_secs(5)).unwrap());
 
                 self.shut_tx = Some(shut_tx);
                 self.server = Some(server);

@@ -55,7 +55,13 @@ fn parse_address(addr: String) -> Result<(String, String), Box<(dyn Error + Send
 
 fn send_ready(sender: Option<Sender<bool>>, ready: bool) -> Option<()> {
     let tx = sender?;
-    tx.send(ready).expect("Sending ready failed.");
+    println!("{}", ready);
+    match tx.send(ready) {
+        Ok(_) => {}
+        Err(e) => {
+            println!("ready channel error: {}", e);
+        }
+    }
     Some(())
 }
 
@@ -108,6 +114,7 @@ impl KafkaServer {
             broker_epoch,
         ));
         controller.activate();
+        println!("CONTROLLER ACTIVATED");
         let controller_clone = controller.clone();
 
         let log_manager = Arc::new(LogManager::init());
@@ -132,7 +139,7 @@ impl KafkaServer {
             wait_shutdown(shutdown).await;
             controller_clone.shutdown();
         };
-
+        println!("EVERYTHING READY!");
         let server_res = server.serve_with_shutdown(addr, shutdown_rx).await;
         // Cleanup any background thread tasks here
         // End cleanup
@@ -140,6 +147,7 @@ impl KafkaServer {
             Ok(()) => Ok(()),
             Err(e) => {
                 send_ready(ready, false);
+                eprintln!("server startup error ({:?}) {:?}", addr, e);
                 Err(Box::new(e))
             }
         }
@@ -200,7 +208,7 @@ impl Broker for BrokerStream {
                 topic_partitions.replicas as usize,
             ) {
                 Ok(()) => {
-                    thread::sleep(time::Duration::from_secs(2));
+                    thread::sleep(time::Duration::from_secs(3));
                     Ok(Response::new(Void {}))
                 }
                 Err(e) => Err(tonic::Status::unknown(e.to_string())),

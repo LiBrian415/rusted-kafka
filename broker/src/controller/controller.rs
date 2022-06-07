@@ -66,7 +66,7 @@ impl Controller {
                     if event.state() == EVENT_SHUTDOWN {
                         // A mock event for testing
                         println!("broker {} is shutdown", self.broker_id);
-                        let _ = self.zk_client.client.close();
+                        // let _ = self.zk_client.client.close();
                         event.complete();
                         break;
                     }
