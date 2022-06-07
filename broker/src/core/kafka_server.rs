@@ -22,13 +22,10 @@ use crate::{
         topic_partition::{LeaderAndIsr, TopicPartition},
     },
     controller::controller_worker::ControllerWorker,
-    zk::{zk_client::KafkaZkClient, zk_watcher::KafkaZkHandlers},
+    zk::zk_client::KafkaZkClient,
 };
 
-use super::{
-    fetcher_manager::ReplicaFetcherManager, log_manager::LogManager,
-    replica_manager::ReplicaManager,
-};
+use super::{log_manager::LogManager, replica_manager::ReplicaManager};
 
 fn parse_socket(addr: String) -> Result<SocketAddr, Box<(dyn Error + Send + Sync)>> {
     match addr.to_socket_addrs() {

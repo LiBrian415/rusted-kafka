@@ -18,7 +18,7 @@ use super::{
     ack_manager::AckManager,
     background::{isr_update::isr_update_task, watermark_checkpoint::watermark_cp_task},
     err::{ReplicaError, ReplicaResult},
-    fetcher_manager::ReplicaFetcherManager,
+    fetcher_manager::FetcherManager,
     log_manager::LogManager,
     partition_manager::PartitionManager,
 };
@@ -40,7 +40,7 @@ pub struct ReplicaManager {
     zk_client: Arc<KafkaZkClient>,
     partition_manager: Arc<PartitionManager>,
     ack_manager: Arc<AckManager>,
-    fetcher_manager: Arc<ReplicaFetcherManager>,
+    fetcher_manager: Arc<FetcherManager>,
 
     _isr_update_task: JoinHandle<()>,
     _watermark_cp_task: JoinHandle<()>,
@@ -56,7 +56,7 @@ impl ReplicaManager {
         let partition_manager = Arc::new(PartitionManager::init(log_manager.clone()));
         let ack_manager = Arc::new(AckManager::init(log_manager.clone()));
         let controller_epoch = Arc::new(RwLock::new(controller_epoch));
-        let fetcher_manager = Arc::new(ReplicaFetcherManager::init(zk_client.clone()));
+        let fetcher_manager = Arc::new(FetcherManager::init(zk_client.clone()));
 
         let replica_manager = Arc::new(ReplicaManager {
             broker_id,
@@ -171,7 +171,8 @@ impl ReplicaManager {
         let local_offset = log.get_log_end();
 
         // 5)
-        self.fetcher_manager.fetch(topic_partition, local_offset);
+        self.fetcher_manager
+            .create_fetcher_thread(&topic_partition, local_offset);
 
         Ok(())
     }
