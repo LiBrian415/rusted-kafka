@@ -18,14 +18,6 @@ use super::{
     replica_manager::ReplicaManager,
 };
 
-fn deserialize(messages: Vec<u8>) -> (String, usize) {
-    let len = u32::from_be_bytes(messages[0..4].try_into().unwrap()) as usize + 4;
-    let l = std::cmp::min(len, messages.len());
-    let mut padded: Vec<u8> = vec![0; 4];
-    padded.append(&mut messages[4..l].to_vec());
-    (String::from_utf8(padded).unwrap(), len)
-}
-
 pub struct FetcherManager {
     fetcher_threads: Mutex<HashMap<TopicPartition, (JoinHandle<ReplicaResult<()>>, Arc<Watcher>)>>,
     replica_manager: RwLock<Option<Arc<ReplicaManager>>>,
@@ -112,10 +104,6 @@ impl FetcherManager {
                     .await?;
                 while let Some(res) = iter.message().await? {
                     let ConsumerOutput { messages } = res;
-                    println!(
-                        "fetcher fetched message {:?}",
-                        deserialize(messages.clone())
-                    );
                     // 3) call log manager to append log
                     offset = replica_manager.append_local(&topic_partition, messages)?;
                     // replica_manager.checkpoint_high_watermark(&topic_partition, watermark)?;
