@@ -162,6 +162,7 @@ impl ReplicaManager {
         }
 
         // 2)
+        self.fetcher_manager.delete_fetcher_thread(&topic_partition);
 
         // 3)
         let log = self.log_manager.get_or_create_log(&topic_partition);
