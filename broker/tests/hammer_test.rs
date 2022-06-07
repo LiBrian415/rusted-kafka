@@ -274,14 +274,28 @@ async fn test_multi_fail() -> Result<(), Box<(dyn Error + Send + Sync)>> {
     match consume_client.consume("greeting".to_owned(), 0, 0, 128).await {
         Ok(iter) => {
             let messages = get_messages(iter).await?;
-            messages.iter().for_each(|message| println!("res = {:?} {:?}", message, message.len()));
+            messages.iter().for_each(|message| println!("res pre-shutdown = {:?} {:?}", message, message.len()));
         }
         Err(e) => {
-            eprintln!("{:?}", e);
+            eprintln!("consume pre-shutdown {:?}", e);
         }
     }
 
     assert!(!server_testers[0].shutdown().await.is_err());
+
+    let consume_client = KafkaClient::new("localhost".to_owned(), "3001".to_owned());
+
+    match consume_client.consume("greeting".to_owned(), 0, 0, 128).await {
+        Ok(iter) => {
+            let messages = get_messages(iter).await?;
+            messages.iter().for_each(|message| println!("res post-shutdown = {:?} {:?}", message, message.len()));
+        }
+        Err(e) => {
+            eprintln!("consume post-shutdown {:?}", e);
+        }
+    }
+
+    assert!(server_testers[0].shutdown().await.is_err());
     assert!(!server_testers[1].shutdown().await.is_err());
 
     Ok(())
