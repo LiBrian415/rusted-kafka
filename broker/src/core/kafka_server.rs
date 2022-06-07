@@ -75,7 +75,7 @@ pub struct KafkaServer;
 struct BrokerStream {
     zk_client: Arc<KafkaZkClient>,
     broker_info: BrokerInfo,
-    controller: ControllerWorker,
+    controller: Arc<ControllerWorker>,
     replica_manager: Arc<ReplicaManager>,
 }
 
@@ -104,9 +104,13 @@ impl KafkaServer {
         };
         let broker_info = BrokerInfo::init(host.as_str(), port.as_str(), broker_id);
         let broker_epoch = 0;
-        let controller =
-            ControllerWorker::startup(zk_client.clone(), broker_info.clone(), broker_epoch);
+        let controller = Arc::new(ControllerWorker::startup(
+            zk_client.clone(),
+            broker_info.clone(),
+            broker_epoch,
+        ));
         controller.activate();
+        let controller_clone = controller.clone();
 
         let log_manager = Arc::new(LogManager::init());
         let replica_manager = Arc::new(ReplicaManager::init(
@@ -128,6 +132,7 @@ impl KafkaServer {
         let shutdown_rx = async {
             send_ready(ready_clone, true);
             wait_shutdown(shutdown).await;
+            controller_clone.shutdown();
         };
 
         let server_res = server.serve_with_shutdown(addr, shutdown_rx).await;
