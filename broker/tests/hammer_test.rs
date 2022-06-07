@@ -7,7 +7,7 @@ use std::{
 
 use tokio::task::JoinHandle;
 #[allow(unused_imports)]
-use broker::{core::{kafka_server::KafkaServer, kafka_client::KafkaClient}, broker::ConsumerOutput};
+use broker::{{core::{kafka_server::KafkaServer, kafka_client::KafkaClient}, broker::ConsumerOutput}, zk::{zk_client::KafkaZkClient, zk_watcher::KafkaZkHandlers}};
 use tonic::Streaming;
 
 struct ServerTester {
@@ -60,6 +60,9 @@ impl ServerTester {
                 self.server.take().map(|server| async move {
                     server.await;
                 });
+
+                tokio::time::sleep(Duration::from_secs(1)).await;
+
                 Ok(())
             },
             None => Err(Box::<dyn Error + Send + Sync>::from("Server not started."))
@@ -68,6 +71,8 @@ impl ServerTester {
 }
 
 async fn spawn_multi_server_testers(start_port: usize, count: usize) -> Vec<ServerTester> {
+    cleanup();
+
     let mut addrs = Vec::new();
     for c in 0..count {
         addrs.push(format!("localhost:{}", start_port + c));
@@ -79,6 +84,9 @@ async fn spawn_multi_server_testers(start_port: usize, count: usize) -> Vec<Serv
         assert!(!server_tester.start().await.is_err());
         server_testers.push(server_tester);
     }
+
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
     server_testers
 }
 
@@ -89,6 +97,17 @@ async fn spawn_multi_server_testers(start_port: usize, count: usize) -> Vec<Serv
 //     }
 //     return clients;
 // }
+
+fn cleanup() -> Result<(), Box<(dyn Error + Send + Sync)>> {
+    let zk_client = Arc::new(KafkaZkClient::init(
+        "localhost:2181",
+        Duration::from_secs(3),
+    )?);
+    zk_client.cleanup();
+    zk_client.create_top_level_paths();
+
+    Ok(())
+}
 
 async fn join<T>(handles: Vec<JoinHandle<T>>) -> Vec<T> {
     let mut results = Vec::new();
@@ -180,7 +199,6 @@ async fn test_tester_start() -> Result<(), Box<(dyn Error + Send + Sync)>> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_multi_simple() -> Result<(), Box<(dyn Error + Send + Sync)>> {
     let mut server_testers = spawn_multi_server_testers(3000, 1).await;
-    tokio::time::sleep(Duration::from_secs(1)).await;
 
     let produce_client = KafkaClient::new("localhost".to_owned(), "3000".to_owned());
     let consume_client = KafkaClient::new("localhost".to_owned(), "3000".to_owned());
@@ -209,7 +227,6 @@ async fn test_multi_simple() -> Result<(), Box<(dyn Error + Send + Sync)>> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_multi_produce() -> Result<(), Box<(dyn Error + Send + Sync)>> {
     let mut server_testers = spawn_multi_server_testers(3000, 1).await;
-    tokio::time::sleep(Duration::from_secs(1)).await;
 
     let produce_client = KafkaClient::new("localhost".to_owned(), "3000".to_owned());
     let consume_client = KafkaClient::new("localhost".to_owned(), "3000".to_owned());
@@ -240,7 +257,6 @@ async fn test_multi_produce() -> Result<(), Box<(dyn Error + Send + Sync)>> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_multi_fail() -> Result<(), Box<(dyn Error + Send + Sync)>> {
     let mut server_testers = spawn_multi_server_testers(3000, 2).await;
-    tokio::time::sleep(Duration::from_secs(1)).await;
 
     let produce_client = KafkaClient::new("localhost".to_owned(), "3000".to_owned());
     let consume_client = KafkaClient::new("localhost".to_owned(), "3000".to_owned());
