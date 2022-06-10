@@ -343,4 +343,8 @@ impl ReplicaManager {
             )))
         }
     }
+
+    pub fn shutdown(&self) {
+        self.fetcher_manager.shutdown();
+    }
 }

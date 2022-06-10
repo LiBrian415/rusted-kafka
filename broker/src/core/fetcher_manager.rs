@@ -146,6 +146,18 @@ impl FetcherManager {
             }
         }
     }
+
+    pub fn shutdown(&self) {
+        println!("-----ABORT FETCHER THREAD-----");
+        let g = self.fetcher_threads.lock().unwrap();
+        (*g).iter().for_each(|(k, v)| {
+            println!("topic_partition: {:?}", k);
+            let (t, w) = v;
+            t.abort();
+            self.zk_client.unregister_znode_change_handler(&w.path());
+        });
+        println!();
+    }
 }
 
 pub struct Watcher {
