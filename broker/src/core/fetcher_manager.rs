@@ -103,7 +103,10 @@ impl FetcherManager {
                     )
                     .await?;
                 while let Some(res) = iter.message().await? {
-                    let ConsumerOutput { messages } = res;
+                    let ConsumerOutput {
+                        messages,
+                        high_watermark,
+                    } = res;
                     // 3) call log manager to append log
                     offset = replica_manager.append_local(&topic_partition, messages)?;
                     // replica_manager.checkpoint_high_watermark(&topic_partition, watermark)?;

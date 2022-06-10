@@ -232,7 +232,7 @@ impl Broker for BrokerStream {
 
         let tp = TopicPartition::init(topic.as_str(), partition);
 
-        match self.replica_manager.append_messages(-1, tp, messages).await {
+        match self.replica_manager.append_messages(0, tp, messages).await {
             Ok(()) => Ok(Response::new(Void {})),
             Err(e) => Err(tonic::Status::unknown(e.to_string())),
         }
@@ -275,7 +275,7 @@ impl Broker for BrokerStream {
                 None => return Err(tonic::Status::not_found("TopicPartition not found")),
             };
 
-            let (_tp, (messages, _high_watermark)) = messages;
+            let (_tp, (messages, high_watermark)) = messages;
 
             let len = messages.len();
             let mut start = 0;
@@ -283,7 +283,10 @@ impl Broker for BrokerStream {
                 let end = std::cmp::min(fetch_max_bytes, len - start);
                 let send = messages[start..(start + end)].to_vec();
                 match tx
-                    .send(Result::<_, Status>::Ok(ConsumerOutput { messages: send }))
+                    .send(Result::<_, Status>::Ok(ConsumerOutput {
+                        messages: send,
+                        high_watermark,
+                    }))
                     .await
                 {
                     Ok(_) => {
