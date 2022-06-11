@@ -112,10 +112,13 @@ impl KafkaServer {
         ));
         controller.activate();
         println!("CONTROLLER ACTIVATED");
-        let controller_clone = controller.clone();
 
         let log_manager = Arc::new(LogManager::init());
         let replica_manager = ReplicaManager::init(broker_id, None, log_manager, zk_client.clone());
+
+        let ready_clone = ready.clone();
+        let controller_clone = controller.clone();
+        let replica_manager_clone = replica_manager.clone();
 
         let (event_tx, unlock_event_rx) = tokio::sync::mpsc::channel(1);
         let event_rx = tokio::sync::Mutex::new(unlock_event_rx);
@@ -129,11 +132,11 @@ impl KafkaServer {
         });
         let server = Server::builder().add_service(svc);
 
-        let ready_clone = ready.clone();
         let shutdown_rx = async {
             send_ready(ready_clone, true);
             wait_shutdown(shutdown).await;
             controller_clone.shutdown();
+            replica_manager_clone.shutdown();
         };
         println!("EVERYTHING READY!");
         let server_res = server.serve_with_shutdown(addr, shutdown_rx).await;
@@ -229,7 +232,7 @@ impl Broker for BrokerStream {
 
         let tp = TopicPartition::init(topic.as_str(), partition);
 
-        match self.replica_manager.append_messages(-1, tp, messages).await {
+        match self.replica_manager.append_messages(0, tp, messages).await {
             Ok(()) => Ok(Response::new(Void {})),
             Err(e) => Err(tonic::Status::unknown(e.to_string())),
         }
@@ -272,7 +275,7 @@ impl Broker for BrokerStream {
                 None => return Err(tonic::Status::not_found("TopicPartition not found")),
             };
 
-            let (_tp, (messages, _high_watermark)) = messages;
+            let (_tp, (messages, high_watermark)) = messages;
 
             let len = messages.len();
             let mut start = 0;
@@ -280,7 +283,10 @@ impl Broker for BrokerStream {
                 let end = std::cmp::min(fetch_max_bytes, len - start);
                 let send = messages[start..(start + end)].to_vec();
                 match tx
-                    .send(Result::<_, Status>::Ok(ConsumerOutput { messages: send }))
+                    .send(Result::<_, Status>::Ok(ConsumerOutput {
+                        messages: send,
+                        high_watermark,
+                    }))
                     .await
                 {
                     Ok(_) => {

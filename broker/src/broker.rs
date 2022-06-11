@@ -69,6 +69,8 @@ pub struct ConsumerInput {
 pub struct ConsumerOutput {
     #[prost(bytes = "vec", tag = "1")]
     pub messages: ::prost::alloc::vec::Vec<u8>,
+    #[prost(uint64, tag = "2")]
+    pub high_watermark: u64,
 }
 #[doc = r" Generated client implementations."]
 pub mod broker_client {

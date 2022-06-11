@@ -53,6 +53,7 @@ message ConsumerInput {
 
 message ConsumerOutput {
   bytes messages = 1;
+  uint64 high_watermark = 2;
 }
 
 service Broker {
